@@ -10,7 +10,12 @@
 <title>csTimer clone</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<!-- shared tokens + components, then EXACTLY ONE device layout:
+     the two media queries below are complements, so desktop and mobile
+     layout code never collide. js/mobile.js mirrors the mobile query. -->
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="desktop.css" media="(min-width: 761px) and (min-height: 501px), (min-width: 951px)">
+<link rel="stylesheet" href="mobile.css" media="(max-width: 760px), (max-height: 500px) and (max-width: 950px)">
 </head>
 <body data-theme="light" data-accent="blue">
 
@@ -81,6 +86,8 @@
     </div>
     <div id="padHint"></div>
   </div>
+
+  <div id="mStrip" aria-hidden="true"></div>
 
   <div id="toolDock">
     <div class="card toolCard" id="toolCard1" style="display:none;">
@@ -386,6 +393,13 @@
   </div>
 </div>
 
+<nav id="mtabs" aria-label="views">
+  <button data-view="timer" class="act"><span class="ico">&#9201;</span><span class="lbl" data-i18n="mvTimer">timer</span></button>
+  <button data-view="list"><span class="ico">&#9776;</span><span class="lbl" data-i18n="mvList">times</span></button>
+  <button data-view="tools"><span class="ico">&#9636;</span><span class="lbl" data-i18n="mvTools">tools</span></button>
+  <button data-view="more"><span class="ico">&#9881;</span><span class="lbl" data-i18n="mvMore">more</span></button>
+</nav>
+
 <div id="toasts" aria-live="polite"></div>
 <canvas id="fxCanvas"></canvas>
 
@@ -398,6 +412,7 @@
 <script src="js/scramble.js"></script>
 <script src="js/stats.js"></script>
 <script src="js/app.js"></script>
+<script src="js/mobile.js"></script>
 <script src="js/feat_stats.js"></script>
 <script src="js/feat_data.js"></script>
 <script src="js/feat_tools.js"></script>

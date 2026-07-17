@@ -3,7 +3,7 @@
  * Bump CACHE_VERSION on every deploy to invalidate old caches. */
 'use strict';
 
-var CACHE_VERSION = 'v1.0.0';
+var CACHE_VERSION = 'v1.1.0';
 var CACHE_NAME = 'cstc-clone-' + CACHE_VERSION;
 
 /* All URLs are RELATIVE so the app works under a GitHub Pages subpath. */
@@ -11,7 +11,10 @@ var PRECACHE = [
   './',
   './index.html',
   './style.css',
+  './desktop.css',
+  './mobile.css',
   './manifest.webmanifest',
+  './js/mobile.js',
   './js/draw_nnn.js',
   './js/draw_pyra.js',
   './js/draw_skewb.js',

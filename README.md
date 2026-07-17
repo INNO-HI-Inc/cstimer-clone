@@ -31,3 +31,17 @@ python3 -m http.server 8000
 
 - 코드: MIT (이 저장소의 코드는 전부 새로 작성된 오리지널입니다)
 - 원본 아이디어·기능 설계: [csTimer](https://cstimer.net) — 이 프로젝트는 비공식 팬 클론이며 원본과 무관합니다
+
+## 구조: 모바일 / 데스크톱 분리
+
+레이아웃은 기기별로 파일이 완전히 분리돼 있고, 두 미디어 쿼리는 서로의 **정확한 여집합**이라 어떤 화면에서도 정확히 하나만 적용됩니다.
+
+| 파일 | 적용 대상 |
+|---|---|
+| `style.css` | 공통 토큰·컴포넌트 (레이아웃 없음) |
+| `desktop.css` | `(min-width:761px) and (min-height:501px), (min-width:951px)` |
+| `mobile.css` | `(max-width:760px), (max-height:500px) and (max-width:950px)` |
+| `js/mobile.js` | 모바일 UX 레이어 (탭·스와이프·롱프레스·웨이크락). 데스크톱에선 자동 해제 |
+
+`app.js`(엔진)는 기기를 모르며, 모바일 UI는 `window.App` 플러그인 API로만 붙습니다.
+따라서 모바일을 고쳐도 데스크톱은 영향을 받지 않습니다.

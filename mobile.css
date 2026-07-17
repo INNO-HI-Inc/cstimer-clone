@@ -1,0 +1,186 @@
+/* mobile.css — MOBILE LAYOUT ONLY (original code)
+ * Loaded via <link media="(max-width: 760px), (max-height: 500px) and (max-width: 950px)">
+ * so the browser only applies it on phones (portrait) and short viewports (landscape).
+ * Exact complement of desktop.css — the two never both apply. Shared tokens/
+ * components live in style.css. js/mobile.js mirrors this query in MOBILE_MQ.
+ *
+ * Design: this is NOT the desktop layout squeezed. One pane at a time, a bottom
+ * tab bar within thumb reach, and the timer gets every pixel that's left.
+ */
+
+html, body { height: 100%; height: 100dvh; }
+body {
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+  padding-bottom: calc(54px + env(safe-area-inset-bottom, 0px)); /* tab bar + home indicator */
+  overscroll-behavior: none; /* no pull-to-refresh mid-solve */
+}
+
+/* ---------- view switching: one pane at a time ---------- */
+#main, #leftbar { display: none; }
+body[data-mview="timer"] #main { display: flex; }
+body[data-mview="list"] #leftbar { display: flex; }
+body[data-mview="tools"] #main { display: flex; }
+body[data-mview="tools"] #topbar,
+body[data-mview="tools"] #timerPad,
+body[data-mview="tools"] #mStrip { display: none; }
+body[data-mview="timer"] #toolDock,
+body[data-mview="list"] #toolDock { display: none; }
+
+/* NOTE: must NOT set `display` here — the view-switching rules above own it.
+ * A `display:flex` in this block would have the same specificity but come later,
+ * silently un-hiding every pane at once. flex-direction is inert while hidden. */
+#main, #leftbar {
+  flex: 1; min-height: 0; width: 100%; min-width: 0;
+  flex-direction: column;
+  padding: 8px; gap: 8px;
+}
+#leftbar { padding-top: calc(8px + env(safe-area-inset-top, 0px)); }
+.card { border-radius: 16px; }
+
+/* ---------- left/list view ---------- */
+#lbHeader { display: flex; align-items: center; gap: 4px; padding: 10px 12px; }
+#menuBtns { display: flex; gap: 4px; margin-left: auto; }
+#statsCard { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+#timeListWrap {
+  flex: 1; overflow-y: auto; min-height: 0;
+  margin: 0 -6px; padding: 0 6px;
+  -webkit-overflow-scrolling: touch;
+}
+#timeList td { padding: 9px 2px; font-size: 13.5px; }  /* taller = tappable rows */
+#curBestTable td { padding: 7px 4px; }
+
+/* ---------- timer view ---------- */
+#topbar { padding: 10px 12px; flex: none; }
+#scrCtl {
+  margin-bottom: 6px; flex-wrap: nowrap; overflow-x: auto;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  padding-bottom: 2px;
+}
+#scrCtl::-webkit-scrollbar { display: none; }
+/* reorder: what a thumb actually taps comes first, before the scroll cutoff */
+#scrCtl > * { flex: none; order: 5; }
+#scrCtl #eventSel { order: 0; font-size: 14px; max-width: 46vw; }
+#scrCtl #btnNextScr { order: 1; }
+#scrCtl #btnReScr { order: 2; }
+#scrCtl #btnCopyScr { order: 3; }
+#scrCtl #btnScrHistory { order: 4; }
+#scrCtl #btnLastScr { order: 6; }
+#scrCtl #scrLenBox { order: 7; margin-left: 0; }
+#scrCtl #scrMeta { order: 8; margin-left: 4px; align-self: center; }
+
+#scrambleTxt {
+  font-size: calc(15px * var(--scr-scale, 1));
+  line-height: 1.45; padding: 4px 2px; word-spacing: 2px;
+}
+#scrambleTxt.mono { font-size: calc(12px * var(--scr-scale, 1)); }
+
+#timerPad {
+  flex: 1; min-height: 42vh;
+  background: var(--card);
+  border-radius: 16px;
+  box-shadow: var(--shadow-card);
+  position: relative;
+}
+#timerDisplay { font-size: calc(clamp(56px, 21vw, 108px) * var(--timer-scale, 1)); }
+#padHint { margin-top: 10px; font-size: 12px; padding: 0 16px; text-align: center; }
+#quickBar { margin-top: 12px; }
+#quickBar button { padding: 9px 13px; font-size: 13px; }
+
+/* solving: strip the screen down to the timer */
+body.solving #mtabs { opacity: 0; pointer-events: none; transition: opacity .15s; }
+body.solving.focusmode #topbar,
+body.solving.focusmode #mStrip,
+body.solving.focusmode #padHint { opacity: 0; pointer-events: none; }
+
+/* ---------- stat strip under the timer ---------- */
+#mStrip {
+  display: flex; flex: none; gap: 6px;
+  background: var(--card); border-radius: 16px;
+  box-shadow: var(--shadow-card); padding: 10px 6px;
+}
+#mStrip div {
+  flex: 1; text-align: center; min-width: 0;
+  border-right: 1px solid var(--line);
+}
+#mStrip div:last-child { border-right: none; }
+#mStrip .k { display: block; font-size: 10px; color: var(--sub); font-weight: 600; margin-bottom: 2px; }
+#mStrip .v { display: block; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ---------- tools view: full-width stacked cards ---------- */
+#toolDock {
+  position: static; display: flex; flex-direction: column;
+  gap: 8px; overflow-y: auto; flex: 1; min-height: 0;
+  align-items: stretch;
+}
+.toolCard { width: 100%; min-width: 0; box-shadow: var(--shadow-card); }
+.toolBody { height: calc(230px * var(--img-scale, 1)); }
+
+/* ---------- touch targets ---------- */
+button { min-height: 40px; }
+button.icon { min-height: 36px; min-width: 36px; }
+.sessBtns button { min-height: 38px; }
+select, input[type="text"], input[type="number"] {
+  min-height: 40px;
+  font-size: 16px; /* 16px stops iOS Safari from zooming on focus */
+}
+
+/* ---------- bottom tab bar ---------- */
+#mtabs {
+  display: flex; position: fixed; left: 0; right: 0; bottom: 0;
+  z-index: 50;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+#mtabs button {
+  flex: 1; min-height: 54px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: none; border-radius: 0; padding: 6px 0;
+  color: var(--g400); font-weight: 600;
+}
+#mtabs button:hover { background: none; }
+#mtabs button:active { transform: none; background: var(--hover); }
+#mtabs .ico { font-size: 17px; line-height: 1; }
+#mtabs .lbl { font-size: 10px; letter-spacing: 0; }
+#mtabs button.act { color: var(--accent); }
+
+/* ---------- bottom-sheet modals ---------- */
+.modal { align-items: flex-end; }
+.mbox {
+  width: 100%; max-width: 100vw; border-radius: 22px 22px 0 0;
+  animation: sheetup .28s cubic-bezier(.3,1.2,.5,1);
+  max-height: 86vh;
+  padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+}
+.mbox::before { /* grabber */
+  content: ""; display: block; width: 36px; height: 4px; border-radius: 2px;
+  background: var(--g300); margin: -6px auto 12px;
+}
+@keyframes sheetup { from { transform: translateY(40px); opacity: .6; } }
+.orow { padding: 13px 2px; }
+#optTabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+#optTabs::-webkit-scrollbar { display: none; }
+#optTabs button { flex: none; }
+#toasts { bottom: calc(70px + env(safe-area-inset-bottom, 0px)); }
+
+/* ---------- landscape phones: every vertical pixel to the timer ---------- */
+@media (max-height: 500px) {
+  body { padding-bottom: calc(44px + env(safe-area-inset-bottom, 0px)); }
+  #mtabs button { min-height: 44px; flex-direction: row; gap: 6px; }
+  #mtabs .lbl { display: none; }
+  #main, #leftbar { padding: 6px; gap: 6px; }
+  #topbar { padding: 7px 10px; }
+  #scrCtl { margin-bottom: 4px; }
+  #scrambleTxt { font-size: calc(13px * var(--scr-scale, 1)); line-height: 1.35; }
+  #timerDisplay { font-size: calc(clamp(38px, 15vh, 80px) * var(--timer-scale, 1)); }
+  #mStrip { padding: 5px 4px; }
+  #mStrip .k { font-size: 9px; margin-bottom: 0; }
+  #mStrip .v { font-size: 13px; }
+  #padHint, #inspBar { display: none; }
+  #timerPad { min-height: 0; }
+  #quickBar { margin-top: 6px; }
+  #quickBar button { padding: 5px 10px; min-height: 30px; }
+  .mbox { max-height: 92vh; }
+}

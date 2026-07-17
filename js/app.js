@@ -36,7 +36,8 @@
     'resetAll': '전체 데이터 초기화', 'pasteJson': '내보낸 JSON을 붙여넣기',
     'sessTitle': '세션', 'inputScrTitle': '스크램블 입력', 'inputScrHint': '한 줄에 하나씩. 순서대로 사용됩니다.',
     'addQueue': '큐에 추가', 'scrHistTitle': '스크램블 히스토리', 'helpTitle': '키보드 단축키',
-    'emptyHint': '아직 기록이 없어요.\n스페이스를 눌렀다 떼면 시작!', 'tap': '탭', 'start': '시작', 'stop': '정지'
+    'emptyHint': '아직 기록이 없어요.\n스페이스를 눌렀다 떼면 시작!', 'tap': '탭', 'start': '시작', 'stop': '정지',
+    'mvTimer': '타이머', 'mvList': '기록', 'mvTools': '도구', 'mvMore': '설정'
   };
   function lang() { return (DB && DB.options.lang) || 'en'; }
   function T(ko, en) { return lang() === 'ko' ? ko : en; }
@@ -458,6 +459,13 @@
       if (!padTouching) return;
       padTouching = false; padUp(true); e.preventDefault();
     }, { passive: false });
+    // a touch stolen by the system (call, gesture, notification) must not strand the timer mid-hold
+    pad.addEventListener('touchcancel', function () {
+      if (!padTouching) return;
+      padTouching = false;
+      if (T_.state === 'holding' || T_.state === 'preInspect') cancelTimer();
+      else if (T_.state === 'inspectHolding') T_.state = 'inspect';
+    });
   }
 
   /* =============== solves =============== */
@@ -673,6 +681,12 @@
     emit('render');
   }
 
+  /* Device split: layout lives in desktop.css / mobile.css (mutually exclusive
+   * <link media> queries) and the phone UX layer lives in js/mobile.js.
+   * This query MUST match mobile.css's <link media> and mobile.js's MOBILE_MQ. */
+  var MOBILE_MQ = '(max-width: 760px), (max-height: 500px) and (max-width: 950px)';
+  function isMobile() { return window.matchMedia(MOBILE_MQ).matches; }
+
   /* avg detail modal */
   function openAvgDetail(n, isMean, endIdx, isBest) {
     var s = curSession();
@@ -862,8 +876,12 @@
   }
   function renderTools() {
     renderToolSlot(0);
-    if (opts().secondTool) renderToolSlot(1);
-    $('toolCard1').style.display = opts().secondTool ? '' : 'none';
+    // the mobile tools tab is a whole screen — always use the second slot there,
+    // regardless of the desktop-only "second tool panel" space setting
+    var showSecond = opts().secondTool ||
+      (isMobile() && document.body.dataset.mview === 'tools');
+    if (showSecond) renderToolSlot(1);
+    $('toolCard1').style.display = showSecond ? '' : 'none';
   }
   function renderToolSlot(slot) {
     var id = opts()['tool' + slot];
@@ -1434,6 +1452,7 @@
     deleteSolve: deleteSolve,
     i18n: function (key, ko, en) { return T(ko, en); },
     lang: lang,
+    isMobile: isMobile,
     openTimeModal: openTimeModal
   };
 

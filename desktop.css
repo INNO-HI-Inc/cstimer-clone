@@ -1,0 +1,65 @@
+/* desktop.css — DESKTOP LAYOUT ONLY (original code)
+ * Loaded via <link media> so the browser only applies it on pointer-driven,
+ * tall viewports. Mobile layout lives in mobile.css and never overlaps this file.
+ * The media attr on the <link> is the exact complement of mobile.css's:
+ *   desktop: (min-width: 761px) and (min-height: 501px), (min-width: 951px)
+ *   mobile : (max-width: 760px), (max-height: 500px) and (max-width: 950px)
+ * Shared tokens/components stay in style.css.
+ */
+
+body { flex-direction: row; padding: 12px; gap: 12px; }
+
+/* ---------- left column ---------- */
+#leftbar {
+  width: 264px; min-width: 264px; height: 100%;
+  display: flex; flex-direction: column; gap: 12px;
+}
+#lbHeader { display: flex; align-items: center; gap: 4px; padding: 10px 12px; flex-wrap: wrap; }
+#lbHeader button.icon { padding: 6px 8px; font-size: 14px; }
+#menuBtns { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+
+#statsCard { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+#timeListWrap { flex: 1; overflow-y: auto; min-height: 0; margin: 0 -6px; padding: 0 6px; }
+
+/* ---------- main column ---------- */
+#main { flex: 1; position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+#topbar { padding: 12px 16px; }
+#scrCtl { flex-wrap: wrap; margin-bottom: 8px; }
+#scrCtl select#eventSel { max-width: 210px; }
+#scrMeta { margin-left: auto; }
+
+#timerPad { flex: 1; }
+#timerDisplay { font-size: calc(15vmin * var(--timer-scale, 1)); }
+#padHint { margin-top: 16px; }
+
+/* floating tool dock, bottom-right of the timer area */
+#toolDock {
+  position: absolute; right: 4px; bottom: 4px;
+  display: flex; gap: 10px; align-items: flex-end;
+  z-index: var(--z-tool);
+}
+.toolCard { width: 312px; box-shadow: var(--shadow-float); }
+.toolBody { height: calc(210px * var(--img-scale, 1)); }
+
+/* Narrow desktop / tablet: the floating dock is absolutely positioned over the
+ * bottom-right of the timer pad, and below ~1150px the centered timer text runs
+ * into it. Drop the dock into normal flow underneath the timer instead. */
+@media (max-width: 1150px) {
+  #leftbar { width: 232px; min-width: 232px; }
+  #toolDock {
+    position: static;
+    overflow-x: auto; overflow-y: hidden;
+    align-items: stretch; flex: none;
+    padding-bottom: 2px;
+  }
+  .toolCard { width: 268px; min-width: 268px; box-shadow: var(--shadow-card); }
+  .toolBody { height: calc(180px * var(--img-scale, 1)); }
+  #timerDisplay { font-size: calc(11vmin * var(--timer-scale, 1)); }
+}
+
+/* focus mode: hide chrome while solving (desktop only — mobile has its own rule) */
+body.solving.focusmode #leftbar,
+body.solving.focusmode #topbar,
+body.solving.focusmode .toolCard,
+body.solving.focusmode #padHint { opacity: 0; pointer-events: none; }
