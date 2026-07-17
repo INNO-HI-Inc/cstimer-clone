@@ -221,6 +221,10 @@
 
     var yaw = opts.yaw == null ? -30 : opts.yaw;   // camera azimuth; see DEFAULT FRAMING below
     var pitch = opts.pitch == null ? 37.5 : opts.pitch;
+    /* XRAY: keep the far faces and fade them so the 3 hidden faces show through, instead of
+     * parking a whole second cube next to this one (which is dizzying to track). */
+    var xray = !!opts.xray;
+    var XRAY_FRONT_A = 0.92, XRAY_BACK_A = 0.34, XRAY_BODY_A = 0.16;
 
     var cubies = buildCubies(n);
     var state = NNN.solved(n);
@@ -477,9 +481,13 @@
           var nm = moving ? rotAxis(nm0, anim.geo.axis, ang) : nm0;
           var cen = [center[0] + nm[0] * h, center[1] + nm[1] * h, center[2] + nm[2] * h];
 
-          // backface cull against the true (perspective) view vector
+          /* Backface test against the true (perspective) view vector.
+           * Normally we cull. In XRAY mode we keep the far faces and draw them faded, so
+           * the three hidden faces show THROUGH the cube — the depth sort below already
+           * puts far polys first, which is exactly the order alpha compositing needs. */
           var toCam = [camW[0] - cen[0], camW[1] - cen[1], camW[2] - cen[2]];
-          if (nm[0] * toCam[0] + nm[1] * toCam[1] + nm[2] * toCam[2] <= 0) { culled++; continue; }
+          var facing = nm[0] * toCam[0] + nm[1] * toCam[1] + nm[2] * toCam[2] > 0;
+          if (!facing && !xray) { culled++; continue; }
 
           var ax = fi === 0 || fi === 3 ? 1 : (fi === 1 || fi === 4 ? 0 : 2);
           var u0 = AXIS_U[ax], v0 = AXIS_V[ax];
@@ -489,7 +497,12 @@
           var lit = lightDir[0] * nm[0] + lightDir[1] * nm[1] + lightDir[2] * nm[2];
           var k = 0.70 + 0.30 * Math.max(0, lit);
 
-          polys.push(quad(cen, u, vv, h, shade(rgbOf(body), 0.55 + 0.45 * k), 0));
+          /* In xray the body must get out of the way — an opaque shell between the camera
+           * and the far stickers is the whole thing we are trying to see past. */
+          var bodyA = xray ? (facing ? XRAY_BODY_A : XRAY_BODY_A * 0.6) : 1;
+          if (bodyA > 0.02) {
+            polys.push(quad(cen, u, vv, h, shade(rgbOf(body), 0.55 + 0.45 * k), 0, bodyA));
+          }
 
           // sticker: only on the true outer surface of the whole cube
           var onSurface = (nm0[0] !== 0 && cu.i[0] === (nm0[0] > 0 ? n - 1 : 0)) ||
@@ -500,11 +513,12 @@
           if (!fc) continue;
           var col = palette[src[fc.f][fc.r * n + fc.c]] || '#888';
           var lift = [cen[0] + nm[0] * 0.012, cen[1] + nm[1] * 0.012, cen[2] + nm[2] * 0.012];
-          polys.push(quad(lift, u, vv, h * stickerSize, shade(rgbOf(col), k), stickerRadius * h));
+          var stkA = xray ? (facing ? XRAY_FRONT_A : XRAY_BACK_A) : 1;
+          polys.push(quad(lift, u, vv, h * stickerSize, shade(rgbOf(col), k), stickerRadius * h, stkA));
         }
       }
 
-      function quad(cen, u, v, s, fill, radius) {
+      function quad(cen, u, v, s, fill, radius, alpha) {
         var pts = [
           [cen[0] - u[0] * s - v[0] * s, cen[1] - u[1] * s - v[1] * s, cen[2] - u[2] * s - v[2] * s],
           [cen[0] + u[0] * s - v[0] * s, cen[1] + u[1] * s - v[1] * s, cen[2] + u[2] * s - v[2] * s],
@@ -513,7 +527,11 @@
         ];
         var sp = pts.map(project);
         var dx = cen[0] - camW[0], dy = cen[1] - camW[1], dz = cen[2] - camW[2];
-        return { pts: sp, fill: fill, radius: radius, depth: dx * dx + dy * dy + dz * dz };
+        return {
+          pts: sp, fill: fill, radius: radius,
+          alpha: alpha == null ? 1 : alpha,
+          depth: dx * dx + dy * dy + dz * dz
+        };
       }
 
       // painter's algorithm: farthest first, so nearer polys are drawn LAST (on top)
@@ -535,6 +553,7 @@
             return [gx + vx * t, gy + vy * t];
           });
         }
+        if (P.alpha < 1 && ctx.globalAlpha != null) ctx.globalAlpha = P.alpha;
         ctx.beginPath();
         ctx.moveTo(path[0][0], path[0][1]);
         for (var j = 1; j < path.length; j++) ctx.lineTo(path[j][0], path[j][1]);
@@ -547,6 +566,7 @@
           ctx.lineWidth = rad * 2;
           ctx.stroke();
         }
+        if (P.alpha < 1 && ctx.globalAlpha != null) ctx.globalAlpha = 1;
       }
 
       // `order` is a lazy getter: building it eagerly would allocate a second array on
@@ -609,6 +629,8 @@
       onSolved: function (cb) { onSolvedCbs.push(cb); return api; },
       onTurn: function (cb) { onTurnCbs.push(cb); return api; },
       setDuration: function (ms) { duration = Math.max(0, ms || 0); return api; },
+      setXray: function (on) { xray = !!on; render(); return api; },
+      getXray: function () { return xray; },
       setPalette: function (p) { palette = p.slice(); render(); return api; },
       size: n,
       stats: function () { return lastStats; },
