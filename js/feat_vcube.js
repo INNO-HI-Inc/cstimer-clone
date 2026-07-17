@@ -419,8 +419,8 @@
     if (!ui.xrayBtn) return;
     var on = xrayOn();
     ui.xrayBtn.textContent = on
-      ? T('vcubeXrayOff', '투명 끄기', 'solid')
-      : T('vcubeXrayOn', '투명 보기', 'see-through');
+      ? T('vcubeXrayOff', '뒷면 끄기', 'solid')
+      : T('vcubeXrayOn', '뒷면 비추기', 'see-through');
     ui.xrayBtn.classList.toggle('primary', on);
   }
   function syncXray() {
@@ -890,7 +890,7 @@
       var row = document.createElement('label');
       row.className = 'orow';
       var label = document.createElement('span');
-      label.textContent = T('vcubeXrayOpt', '가상 큐브: 투명하게 (뒷면 비침)', 'virtual cube: see-through');
+      label.textContent = T('vcubeXrayOpt', '가상 큐브: 틈으로 뒷면 보기', 'virtual cube: see the back through the gaps');
       var sw = document.createElement('span'); sw.className = 'tswitch';
       var inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = xrayOn();
       var i = document.createElement('i');

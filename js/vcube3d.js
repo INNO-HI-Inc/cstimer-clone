@@ -221,10 +221,19 @@
 
     var yaw = opts.yaw == null ? -30 : opts.yaw;   // camera azimuth; see DEFAULT FRAMING below
     var pitch = opts.pitch == null ? 37.5 : opts.pitch;
-    /* XRAY: keep the far faces and fade them so the 3 hidden faces show through, instead of
-     * parking a whole second cube next to this one (which is dizzying to track). */
+    /* SEE-THROUGH ("사이로 뒷면이 보이게") — csTimer's look, and what a cuber actually wants.
+     * NOT a translucent cube: the stickers stay FULLY OPAQUE and keep their true colour, and
+     * the cube BODY simply isn't drawn. Stickers are inset (stickerSize < 1), so the gaps
+     * between them are what you see the far stickers through. Fading everything made the
+     * colours unreadable; this keeps every sticker its real colour. */
     var xray = !!opts.xray;
-    var XRAY_FRONT_A = 0.92, XRAY_BACK_A = 0.34, XRAY_BODY_A = 0.16;
+    var XRAY_BODY_A = 0;      // body hidden entirely — the gaps ARE the window
+    var XRAY_BACK_A = 1;      // far stickers at full colour, seen through those gaps
+    var XRAY_FRONT_A = 1;
+    /* With the body gone, the normal 0.80 sticker leaves a ~25% gap and the cube reads as
+     * floating confetti. Fatten the stickers so the silhouette is a cube again and the gaps
+     * become windows rather than the main event. */
+    var XRAY_STICKER = opts.xrayStickerSize || 0.94;
 
     var cubies = buildCubies(n);
     var state = NNN.solved(n);
@@ -497,11 +506,11 @@
           var lit = lightDir[0] * nm[0] + lightDir[1] * nm[1] + lightDir[2] * nm[2];
           var k = 0.70 + 0.30 * Math.max(0, lit);
 
-          /* In xray the body must get out of the way — an opaque shell between the camera
-           * and the far stickers is the whole thing we are trying to see past. */
-          var bodyA = xray ? (facing ? XRAY_BODY_A : XRAY_BODY_A * 0.6) : 1;
-          if (bodyA > 0.02) {
-            polys.push(quad(cen, u, vv, h, shade(rgbOf(body), 0.55 + 0.45 * k), 0, bodyA));
+          /* The body is the shell between the camera and the far stickers, so see-through
+           * mode simply does not draw it. Skipping the push (rather than alpha 0) also keeps
+           * the poly list — and the depth sort — half the size. */
+          if (!xray) {
+            polys.push(quad(cen, u, vv, h, shade(rgbOf(body), 0.55 + 0.45 * k), 0, 1));
           }
 
           // sticker: only on the true outer surface of the whole cube
@@ -514,7 +523,8 @@
           var col = palette[src[fc.f][fc.r * n + fc.c]] || '#888';
           var lift = [cen[0] + nm[0] * 0.012, cen[1] + nm[1] * 0.012, cen[2] + nm[2] * 0.012];
           var stkA = xray ? (facing ? XRAY_FRONT_A : XRAY_BACK_A) : 1;
-          polys.push(quad(lift, u, vv, h * stickerSize, shade(rgbOf(col), k), stickerRadius * h, stkA));
+          var stkS = xray ? XRAY_STICKER : stickerSize;
+          polys.push(quad(lift, u, vv, h * stkS, shade(rgbOf(col), k), stickerRadius * h, stkA));
         }
       }
 
