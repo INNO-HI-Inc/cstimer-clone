@@ -94,6 +94,11 @@ hold space, release, and go!</span>
 
   <div id="mStrip" aria-hidden="true"></div>
 
+  <!-- Mobile "cube" tab pane. js/feat_vcube.js mounts the play UI in here via
+       VCubeFeat.mount(); on desktop the same UI is shown in a modal instead.
+       Hidden by default — mobile.css reveals it for body[data-mview="cube"]. -->
+  <section id="cubePane" class="card" aria-label="virtual cube"></section>
+
   <div id="toolDock">
     <!-- `display: none` is written with a space so this initial value serialises
          identically to what app.js later writes via style.display — desktop.css

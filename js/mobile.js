@@ -59,19 +59,16 @@
   }
 
   /* ---------------- view switching ---------------- */
-  var VIEWS = ['timer', 'list', 'tools'];
+  // tab order = swipe order. 'cube' is a real pane; only 'more' is an action.
+  var VIEWS = ['timer', 'list', 'cube', 'tools'];
   function view() { return document.body.dataset.mview || 'timer'; }
   function setView(v, haptic) {
-    // 'more' and 'cube' are actions, not panes: they open a sheet/overlay and
-    // leave the underlying view (and its tab highlight) where it was.
+    // 'more' is an action, not a pane: it opens the settings sheet and leaves
+    // the underlying view (and its tab highlight) where it was.
     if (v === 'more') { $('btnOptions').click(); return; }
-    if (v === 'cube') {
-      if (haptic) buzz(8);
-      if (window.VCubeFeat && window.VCubeFeat.open) window.VCubeFeat.open();
-      else App.toast(t('가상 큐브를 불러오지 못했어요', 'virtual cube failed to load'), { type: 'error' });
-      return;
-    }
     if (VIEWS.indexOf(v) < 0) v = 'timer';
+    var leavingCube = document.body.dataset.mview === 'cube' && v !== 'cube';
+    var enteringCube = v === 'cube';
     document.body.dataset.mview = v;
     document.querySelectorAll('#mtabs button').forEach(function (b) {
       var on = b.dataset.view === v;
@@ -80,6 +77,18 @@
     });
     try { localStorage.setItem('cstc_pack_mobile_view', v); } catch (e) { }
     if (haptic) buzz(8);
+    // The cube pane owns a live engine + rAF loop, so it must be told when it
+    // is on screen — mounting while display:none would size its canvas to 0.
+    // Mount AFTER the dataset flip (the pane must be laid out to measure).
+    if (window.VCubeFeat) {
+      if (enteringCube && VCubeFeat.mount) {
+        try { VCubeFeat.mount($('cubePane')); } catch (e) { console.error('[vcube] mount', e); }
+      } else if (leavingCube && VCubeFeat.unmount) {
+        try { VCubeFeat.unmount(); } catch (e) { }
+      }
+    } else if (enteringCube) {
+      $('cubePane').textContent = t('가상 큐브를 불러오지 못했어요', 'virtual cube failed to load');
+    }
     // panes hidden with display:none can't size a canvas — repaint now they're visible
     App.refresh();
   }
@@ -94,7 +103,8 @@
       if (e.touches.length !== 1) { tracking = false; return; }
       // never hijack a solve, a scrollable pane, or a control
       if (document.body.classList.contains('solving')) { tracking = false; return; }
-      if (e.target.closest('#timerPad, .modal, #toolDock, #timeListWrap, #scrCtl, select, input, textarea')) { tracking = false; return; }
+      // #cubePane is excluded: a swipe there turns the cube, it must never also flip the view
+      if (e.target.closest('#timerPad, .modal, #toolDock, #timeListWrap, #scrCtl, #cubePane, select, input, textarea')) { tracking = false; return; }
       x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; tracking = true;
     }, { passive: true });
     document.addEventListener('touchend', function (e) {
@@ -225,6 +235,9 @@
   function uninstall() {
     if (!installed) return;
     installed = false;
+    // tear the cube pane down before handing the DOM back — otherwise its engine
+    // keeps a rAF loop alive against a canvas desktop.css has hidden
+    if (window.VCubeFeat && VCubeFeat.unmount) { try { VCubeFeat.unmount(); } catch (e) { } }
     // hand the DOM back to desktop.css exactly as it found it
     delete document.body.dataset.mview;
     releaseWake();

@@ -261,11 +261,20 @@
     bindOrbit(canvas, function () { return toolInst[slot]; });
   }
 
-  /* ============================== play overlay ============================== */
+  /* ============================== play surface ==============================
+   * ONE play UI, two hosts:
+   *   desktop → a modal overlay (openPlay)
+   *   mobile  → the #cubePane tab, a first-class view (mount/unmount)
+   * `host` is whichever element currently owns the UI. The UI is rebuilt when the
+   * host changes and torn down on leave; `ui`/`eng`/`st` stay module singletons,
+   * so only one surface may be live at a time — which is exactly the invariant we
+   * want (two live engines = two rAF loops double-applying every keypress). */
   var M = null;          // {open, close, body}
   var modalEl = null;
+  var modalBody = null;  // the modal's body element (see isPaneHost)
   var eng = null;        // engine instance
   var ui = {};
+  var host = null;       // element currently holding the play UI
   var st = {
     open: false,
     n: 0,
@@ -339,9 +348,33 @@
     body.appendChild(ui.bad);
   }
 
+  /* (Re)build the play UI inside `container`. Cheap no-op when it is already there. */
+  function buildInto(container) {
+    if (host === container && ui.stage && ui.stage.parentNode) return;
+    container.textContent = '';
+    ui = {};
+    buildPlay(container);
+    host = container;
+    /* In the tab pane the app's own scramble bar is right above us (mobile.css keeps
+     * #topbar visible in the cube view), so our copy is a duplicate eating the vertical
+     * space the cube wants. The modal has no such neighbour and keeps it. */
+    if (ui.scr) ui.scr.style.display = isPaneHost() ? 'none' : '';
+  }
+
+  /* NB: must NOT be expressed as `host !== M.body` — App.registerModal() invokes its build
+   * callback synchronously, i.e. while `M` is still null on the left of the assignment, so
+   * the modal's own body would be misread as a pane and lose its scramble line. Track the
+   * body element directly, set before the build runs. */
+  function isPaneHost() { return !!host && host !== modalBody; }
+
   function ensureModal() {
     if (M) return M;
-    M = App.registerModal('vcubeModal', T('vcube', '가상 큐브', 'virtual cube'), buildPlay);
+    M = App.registerModal('vcubeModal', T('vcube', '가상 큐브', 'virtual cube'), function (body) {
+      /* runs synchronously, before M is assigned — record the body FIRST so isPaneHost()
+       * can tell this apart from a tab pane. */
+      modalBody = body;
+      buildInto(body);
+    });
     modalEl = document.getElementById('vcubeModal');
     /* app.js's closeModals() just strips .show — there is no close callback to subscribe to,
      * so watch the class ourselves and tear the engine down when we go invisible. */
@@ -369,6 +402,20 @@
     eng.render();
   }
   window.addEventListener('resize', function () { if (st.open) fitCanvas(); });
+
+  /* A window resize is not enough for the tab pane: the stage also changes size when the
+   * tab bar / scramble bar reflow, or the phone rotates, with no window event we can use.
+   * Watch the stage box itself. */
+  var ro = null;
+  function observeStage() {
+    unobserveStage();
+    if (!window.ResizeObserver || !ui.stage) return;
+    ro = new ResizeObserver(function () { if (st.open) fitCanvas(); });
+    ro.observe(ui.stage);
+  }
+  function unobserveStage() {
+    if (ro) { try { ro.disconnect(); } catch (e) { } ro = null; }
+  }
 
   function showScramble() {
     if (!ui.scr) return;
@@ -575,25 +622,16 @@
   function teardownPlay() {
     st.open = false;
     stopLoop();
+    unobserveStage();
     document.removeEventListener('keydown', onKey, true);
     if (eng) { try { eng.destroy(); } catch (e) { } eng = null; }
     st.phase = 'idle';
   }
 
-  function openPlay() {
-    /* Idempotent. A second open() without a close would build a SECOND engine over the same
-     * canvas and orphan the first (live rAF loop, never destroyed) and add a second keydown
-     * listener, double-applying every keypress. Hard to reach through the UI — the .modal.show
-     * overlay covers its own trigger buttons — but VCubeFeat.open() is public. */
-    if (st.open) { if (M) M.open(); return; }
-    /* app.js checks T_.state==='running' BEFORE uiBlocked(), so a core solve in flight would be
-     * stopped by our very first cube key. Refuse rather than corrupt someone's time. */
-    if (document.body.classList.contains('solving')) {
-      App.toast && App.toast(T('vcubeBusy', '측정 중에는 열 수 없습니다.',
-        'cannot open while the timer is running.'), { type: 'error' });
-      return;
-    }
-    ensureModal();
+  /* Start play in the CURRENT host. The host must already be built (buildInto) and
+   * VISIBLE — the stage has no box while display:none, and fitCanvas() would size the
+   * canvas to 0. Returns true when a real cube started. */
+  function beginPlay() {
     var ev = App.currentEvent && App.currentEvent();
     var n = cubeSizeOf(ev);
 
@@ -607,7 +645,7 @@
     ui.legend.style.display = cube ? '' : 'none';
 
     if (!cube) {
-      ui.bad.innerHTML = '';
+      ui.bad.textContent = '';
       var p = document.createElement('div');
       p.innerHTML = n
         ? T('vcubeNoEngine', '3D 엔진(js/vcube3d.js)을 불러오지 못했습니다.',
@@ -618,13 +656,11 @@
           'the current event <b>' + (ev && ev.name ? ev.name : '?') + '</b> is not an NxN cube.<br>' +
           'the virtual cube supports 2x2 – 7x7 only.');
       ui.bad.appendChild(p);
-      M.open();
       showScramble();
-      return;
+      return false;
     }
 
-    /* Provisional size; the stage has no box until the modal is shown, so the real fit
-     * happens in fitCanvas() right after M.open(). */
+    /* Provisional; fitCanvas() below does the real sizing now the host is on screen. */
     ui.canvas.style.width = ui.canvas.style.height = '300px';
 
     eng = window.VCube3D.create(ui.canvas, {
@@ -632,17 +668,53 @@
       duration: isMobile() ? 90 : 120
     });
     eng.onSolved(function (ts) { finish(ts); });
-    /* NB: no bindOrbit() here — the canvas was bound once in buildPlay() and reads `eng`
-     * at event time. Binding per open is what leaked four listeners + one engine per open. */
+    /* NB: no bindOrbit() here — the canvas is bound once per build in buildPlay() and
+     * reads `eng` at event time. Binding per open is what leaked listeners + engines. */
 
-    M.open();
     fitCanvas();
+    observeStage();
+    document.addEventListener('keydown', onKey, true);
+    applyScramble();
+    return true;
+  }
+
+  function openPlay() {
+    /* Idempotent. A second open() without a close would build a SECOND engine over the same
+     * canvas and orphan the first (live rAF loop, never destroyed) and add a second keydown
+     * listener, double-applying every keypress. Hard to reach through the UI — the .modal.show
+     * overlay covers its own trigger buttons — but VCubeFeat.open() is public. */
+    if (st.open) { if (M && host === modalBody) M.open(); return; }
+    /* app.js checks T_.state==='running' BEFORE uiBlocked(), so a core solve in flight would be
+     * stopped by our very first cube key. Refuse rather than corrupt someone's time. */
+    if (document.body.classList.contains('solving')) {
+      App.toast && App.toast(T('vcubeBusy', '측정 중에는 열 수 없습니다.',
+        'cannot open while the timer is running.'), { type: 'error' });
+      return;
+    }
+    ensureModal();
+    buildInto(M.body);
+    M.open(); /* show FIRST — beginPlay measures the stage */
     /* Keep focus off the ✕ button: showModal() focuses the first control, and a focused
      * <button> would swallow Space as a click. */
     if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    beginPlay();
+  }
 
-    document.addEventListener('keydown', onKey, true);
-    applyScramble();
+  /* ---- mobile tab pane host (js/mobile.js calls these on entering/leaving the 큐브 view) ---- */
+  function mount(container) {
+    if (!container) return;
+    if (st.open && host === container) return;   // already live here
+    if (st.open) teardownPlay();                 // moving hosts: never run two engines
+    buildInto(container);
+    beginPlay();
+  }
+
+  function unmount() {
+    var pane = isPaneHost() ? host : null;
+    if (st.open) teardownPlay();
+    /* Leave the modal's own body alone — app.js owns that element. Only a pane host
+     * we were handed gets emptied, so the tab doesn't keep a dead canvas around. */
+    if (pane) { pane.textContent = ''; host = null; }
   }
 
   /* ============================== boot ============================== */
@@ -692,6 +764,8 @@
     widthKeys: WIDTH_KEYS,
     cubeSizeOf: cubeSizeOf,
     open: openPlay,
+    mount: mount,       // mobile 큐브 tab pane (js/mobile.js)
+    unmount: unmount,
     state: st,
     engine: function () { return eng; },
     toolInstances: function () { return toolInst; }

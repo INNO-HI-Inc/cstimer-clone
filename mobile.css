@@ -17,16 +17,28 @@ body {
   overscroll-behavior: none; /* no pull-to-refresh mid-solve */
 }
 
-/* ---------- view switching: one pane at a time ---------- */
-#main, #leftbar { display: none; }
+/* ---------- view switching: one pane at a time ----------
+ * "cube" is a first-class view, not an overlay: on a phone the cube IS the
+ * screen. (Desktop shows the same UI in a modal — see js/feat_vcube.js.)
+ * The scramble bar stays visible in the cube view because you need it to solve. */
+#main, #leftbar, #cubePane { display: none; }
 body[data-mview="timer"] #main { display: flex; }
 body[data-mview="list"] #leftbar { display: flex; }
 body[data-mview="tools"] #main { display: flex; }
+body[data-mview="cube"] #main { display: flex; }
 body[data-mview="tools"] #topbar,
 body[data-mview="tools"] #timerPad,
 body[data-mview="tools"] #mStrip { display: none; }
 body[data-mview="timer"] #toolDock,
-body[data-mview="list"] #toolDock { display: none; }
+body[data-mview="list"] #toolDock,
+body[data-mview="cube"] #toolDock { display: none; }
+body[data-mview="cube"] #timerPad,
+body[data-mview="cube"] #mStrip { display: none; }
+body[data-mview="cube"] #cubePane {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+  padding: 10px; gap: 8px;
+}
 
 /* NOTE: must NOT set `display` here — the view-switching rules above own it.
  * A `display:flex` in this block would have the same specificity but come later,
