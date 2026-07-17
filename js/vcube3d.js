@@ -85,6 +85,32 @@
     return 'rgb(' + cl(rgb[0] * k) + ',' + cl(rgb[1] * k) + ',' + cl(rgb[2] * k) + ')';
   }
 
+  /* LIGHTING FLOOR --------------------------------------------------------
+   * A face's brightness multiplier is shadeK(lit), lit = dot(lightDir, normal) in [-1,1].
+   * The floor is what an UNLIT face keeps. It used to be 0.70, which is a photographic
+   * falloff, not a lightbox one, and it wrecked the palette: a white sticker's dimmest
+   * face rendered 0.70*white = grey, and yellow went olive. Raising the floor to 0.82 is
+   * a win-win — it does NOT cost face separation, it improves it, because scaling toward
+   * full value preserves chroma instead of dragging every hue toward black.
+   * Kept as a named export so the palette work can reason about the real rendered colour
+   * (shade(hex, shadeK(-1)) is the worst case any sticker will ever show). */
+  var LIGHT_FLOOR = 0.82;
+  function shadeK(lit) { return LIGHT_FLOOR + (1 - LIGHT_FLOOR) * Math.max(0, lit); }
+
+  /* Render defaults. All of these are opts on create(); this object is the single source
+   * of truth for what you get when you pass nothing, and is asserted by the self-test. */
+  var DEFAULTS = {
+    cubieSize: 0.96,        // fraction of the 1-unit cubie cell; the remainder is the gap
+    stickerSize: 0.88,      // fraction of a cubie face. 0.80 left a fat black grid that ate
+                            // ~a third of the cube; real stickerless cubes are hairline-gapped
+    stickerRadius: 0.14,    // corner radius, fraction of a cubie
+    xrayStickerSize: 0.86,  // see-through mode uses wider gaps — they ARE the window
+    xrayBackScale: 0.92,    // far stickers drawn slightly smaller: a depth cue, not a mistake
+    xrayFrontAlpha: 1,      // the near face must dominate...
+    xrayBackAlpha: 0.45,    // ...and the far face is a hint you glance at, not a competitor
+    xrayBodyAlpha: 0.10     // a faint shell so far slivers read as BEHIND, not as confetti
+  };
+
   /* ------------------------------------------------- facelet <-> 3D space */
 
   // 0=U 1=R 2=F 3=D 4=L 5=B
@@ -212,28 +238,43 @@
     var n = opts.size || 3;
     var palette = (opts.palette || NNN.colors).slice();
     var body = opts.bodyColor || '#12151a';
-    var cubieSize = opts.cubieSize || 0.94;   // gap between cubies shows the body
-    var stickerSize = opts.stickerSize || 0.80; // fraction of a cubie face
-    var stickerRadius = opts.stickerRadius == null ? 0.1 : opts.stickerRadius; // fraction of cubie
+    function num(v, d) { return typeof v === 'number' && isFinite(v) ? v : d; }
+    var cubieSize = num(opts.cubieSize, DEFAULTS.cubieSize);   // gap between cubies shows the body
+    var stickerSize = num(opts.stickerSize, DEFAULTS.stickerSize); // fraction of a cubie face
+    var stickerRadius = num(opts.stickerRadius, DEFAULTS.stickerRadius); // fraction of cubie
     var duration = opts.duration == null ? 120 : opts.duration; // ms per turn, 0 = instant
     var fov = opts.fov || 30;
     var dist = opts.distance || (n * 3.2);
 
     var yaw = opts.yaw == null ? -30 : opts.yaw;   // camera azimuth; see DEFAULT FRAMING below
     var pitch = opts.pitch == null ? 37.5 : opts.pitch;
-    /* SEE-THROUGH ("사이로 뒷면이 보이게") — csTimer's look, and what a cuber actually wants.
-     * NOT a translucent cube: the stickers stay FULLY OPAQUE and keep their true colour, and
-     * the cube BODY simply isn't drawn. Stickers are inset (stickerSize < 1), so the gaps
-     * between them are what you see the far stickers through. Fading everything made the
-     * colours unreadable; this keeps every sticker its real colour. */
+    /* SEE-THROUGH ("사이로 뒷면이 보이게") — a GLANCE at the far side, not a second cube.
+     *
+     * History, because both previous attempts were wrong in opposite directions:
+     *   - a real second cube for the back view was 어지러워 (dizzying) — killed;
+     *   - fading everything to 0.34 "made the colours unreadable" — true, so it was reverted
+     *     to 1.0, which is the other cliff: far stickers at FULL opacity carry the same
+     *     visual weight as near ones, and with the body not drawn at all there is no
+     *     geometry left to say which sliver sits behind what. The result reads as confetti.
+     *
+     * The fix is not a number, it is three cues working together:
+     *   1. the near face stays fully opaque and wins (xrayFrontAlpha = 1);
+     *   2. the far face is a hint (xrayBackAlpha = 0.45) — legible, never competing;
+     *   3. a FAINT body (xrayBodyAlpha = 0.10) comes back. This is the part 0.34 was
+     *      missing: it restores the cube's edges, so a far sliver reads as BEHIND the
+     *      shell rather than as noise floating in space.
+     * Plus a fourth, size: far stickers shrink slightly (xrayBackScale), which is the
+     * same depth cue perspective would give them if they weren't drawn through the front.
+     * The existing far-to-near depth sort is already exactly the order alpha needs. */
     var xray = !!opts.xray;
-    var XRAY_BODY_A = 0;      // body hidden entirely — the gaps ARE the window
-    var XRAY_BACK_A = 1;      // far stickers at full colour, seen through those gaps
-    var XRAY_FRONT_A = 1;
+    var XRAY_BODY_A = num(opts.xrayBodyAlpha, DEFAULTS.xrayBodyAlpha);
+    var XRAY_BACK_A = num(opts.xrayBackAlpha, DEFAULTS.xrayBackAlpha);
+    var XRAY_FRONT_A = num(opts.xrayFrontAlpha, DEFAULTS.xrayFrontAlpha);
+    var XRAY_BACK_S = num(opts.xrayBackScale, DEFAULTS.xrayBackScale);
     /* Gap width in see-through mode is pure taste, so it is a runtime knob (setXrayGap).
      * Below ~0.70 the cube stops reading as a cube and becomes floating confetti; at 0.94
      * the gaps are too mean to see much back through. 0.86 is the default middle. */
-    var xrayStk = opts.xrayStickerSize || 0.86;
+    var xrayStk = num(opts.xrayStickerSize, DEFAULTS.xrayStickerSize);
 
     var cubies = buildCubies(n);
     var state = NNN.solved(n);
@@ -504,26 +545,32 @@
           var vv = moving ? rotAxis(v0, anim.geo.axis, ang) : v0;
 
           var lit = lightDir[0] * nm[0] + lightDir[1] * nm[1] + lightDir[2] * nm[2];
-          var k = 0.70 + 0.30 * Math.max(0, lit);
-
-          /* The body is the shell between the camera and the far stickers, so see-through
-           * mode simply does not draw it. Skipping the push (rather than alpha 0) also keeps
-           * the poly list — and the depth sort — half the size. */
-          if (!xray) {
-            polys.push(quad(cen, u, vv, h, shade(rgbOf(body), 0.55 + 0.45 * k), 0, 1));
-          }
+          var k = shadeK(lit);
 
           // sticker: only on the true outer surface of the whole cube
           var onSurface = (nm0[0] !== 0 && cu.i[0] === (nm0[0] > 0 ? n - 1 : 0)) ||
             (nm0[1] !== 0 && cu.i[1] === (nm0[1] > 0 ? n - 1 : 0)) ||
             (nm0[2] !== 0 && cu.i[2] === (nm0[2] > 0 ? n - 1 : 0));
+
+          var bodyFill = shade(rgbOf(body), 0.55 + 0.45 * k);
+          if (!xray) {
+            // opaque cube: every cubie face gets a body quad — the inner ones are what you
+            // glimpse through the inter-cubie gaps, so they are not redundant.
+            polys.push(quad(cen, u, vv, h, bodyFill, 0, 1));
+          } else if (XRAY_BODY_A > 0 && onSurface) {
+            /* see-through: only the OUTER shell, and only faintly. Inner cubie faces would
+             * stack 6 deep along a ray and mud the far stickers into brown for no gain —
+             * the whole job of the body here is to draw the cube's edges. */
+            polys.push(quad(cen, u, vv, h, bodyFill, 0, XRAY_BODY_A));
+          }
+
           if (!onSurface) continue;
           var fc = posToFacelet(cu.c, nm0, n);
           if (!fc) continue;
           var col = palette[src[fc.f][fc.r * n + fc.c]] || '#888';
           var lift = [cen[0] + nm[0] * 0.012, cen[1] + nm[1] * 0.012, cen[2] + nm[2] * 0.012];
           var stkA = xray ? (facing ? XRAY_FRONT_A : XRAY_BACK_A) : 1;
-          var stkS = xray ? xrayStk : stickerSize;
+          var stkS = xray ? (facing ? xrayStk : xrayStk * XRAY_BACK_S) : stickerSize;
           polys.push(quad(lift, u, vv, h * stkS, shade(rgbOf(col), k), stickerRadius * h, stkA));
         }
       }
@@ -538,7 +585,7 @@
         var sp = pts.map(project);
         var dx = cen[0] - camW[0], dy = cen[1] - camW[1], dz = cen[2] - camW[2];
         return {
-          pts: sp, fill: fill, radius: radius,
+          pts: sp, fill: fill, radius: radius, size: s,
           alpha: alpha == null ? 1 : alpha,
           depth: dx * dx + dy * dy + dz * dz
         };
@@ -547,43 +594,59 @@
       // painter's algorithm: farthest first, so nearer polys are drawn LAST (on top)
       polys.sort(function (a, b) { return b.depth - a.depth; });
 
+      /* ONE path, filled ONCE — never fill-then-stroke.
+       * The old rounding shrank the quad toward its centroid and stroked the outline back
+       * out with a round join. That is invisible at alpha 1, but the stroke re-covers a
+       * rad-wide band of the fill, so at alpha < 1 the band composites twice and every
+       * translucent sticker grows a dark rim (0.45 -> 0.70). See-through mode needs alpha,
+       * so the corners are now real arcs on a single path. arcTo also drops a draw call. */
+      function traceQuad(p, rad) {
+        ctx.beginPath();
+        var j;
+        if (!(rad > 0.5)) {
+          ctx.moveTo(p[0][0], p[0][1]);
+          for (j = 1; j < p.length; j++) ctx.lineTo(p[j][0], p[j][1]);
+          ctx.closePath();
+          return;
+        }
+        // clamp: two arcs sharing an edge must not overrun it (edge-on faces project tiny)
+        var m = Infinity;
+        for (j = 0; j < p.length; j++) {
+          var q = p[(j + 1) % p.length];
+          var d = Math.hypot(q[0] - p[j][0], q[1] - p[j][1]);
+          if (d < m) m = d;
+        }
+        var r = Math.min(rad, m * 0.5);
+        // start on an edge midpoint so arcTo always has a valid current point
+        ctx.moveTo((p[0][0] + p[1][0]) / 2, (p[0][1] + p[1][1]) / 2);
+        for (j = 1; j <= p.length; j++) {
+          var a = p[j % p.length], b = p[(j + 1) % p.length];
+          ctx.arcTo(a[0], a[1], (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, r);
+        }
+        ctx.closePath();
+      }
+
       var pxScale = f / dist;
       for (var i = 0; i < polys.length; i++) {
-        var P = polys[i], p = P.pts;
-        var rad = P.radius * pxScale;
-        var path = p;
-        if (rad > 0.5) {
-          // rounded-corner quad: shrink toward the centroid, then stroke the outline back
-          // out with a round line join. Cheap, exact-enough, and works on any 2D ctx.
-          var gx = (p[0][0] + p[1][0] + p[2][0] + p[3][0]) / 4;
-          var gy = (p[0][1] + p[1][1] + p[2][1] + p[3][1]) / 4;
-          path = p.map(function (q) {
-            var vx = q[0] - gx, vy = q[1] - gy, L = Math.hypot(vx, vy) || 1;
-            var t = Math.max(0, 1 - rad / L);
-            return [gx + vx * t, gy + vy * t];
-          });
-        }
+        var P = polys[i];
         if (P.alpha < 1 && ctx.globalAlpha != null) ctx.globalAlpha = P.alpha;
-        ctx.beginPath();
-        ctx.moveTo(path[0][0], path[0][1]);
-        for (var j = 1; j < path.length; j++) ctx.lineTo(path[j][0], path[j][1]);
-        ctx.closePath();
+        traceQuad(P.pts, P.radius * pxScale);
         ctx.fillStyle = P.fill;
         ctx.fill();
-        if (rad > 0.5) {
-          ctx.strokeStyle = P.fill;
-          ctx.lineJoin = 'round';
-          ctx.lineWidth = rad * 2;
-          ctx.stroke();
-        }
         if (P.alpha < 1 && ctx.globalAlpha != null) ctx.globalAlpha = 1;
       }
 
-      // `order` is a lazy getter: building it eagerly would allocate a second array on
-      // every one of the 60 frames/sec an animation runs at, for test-only data.
+      // `order`/`list` are lazy getters: building them eagerly would allocate a second
+      // array on every one of the 60 frames/sec an animation runs at, for test-only data.
       lastStats = {
         polys: polys.length, culled: culled,
-        get order() { return polys.map(function (q) { return q.depth; }); }
+        get order() { return polys.map(function (q) { return q.depth; }); },
+        // one entry per drawn poly, in draw order (far -> near). Geometry is testable.
+        get list() {
+          return polys.map(function (q) {
+            return { alpha: q.alpha, size: q.size, radius: q.radius, fill: q.fill, depth: q.depth };
+          });
+        }
       };
       return lastStats;
     }
@@ -646,6 +709,15 @@
       getXrayGap: function () { return xrayStk; },
       setPalette: function (p) { palette = p.slice(); render(); return api; },
       size: n,
+      /* The resolved render knobs for THIS instance (defaults merged with opts).
+       * Read-only snapshot — a settings panel can show what it is actually looking at. */
+      getGeometry: function () {
+        return {
+          cubieSize: cubieSize, stickerSize: stickerSize, stickerRadius: stickerRadius,
+          xrayStickerSize: xrayStk, xrayBackScale: XRAY_BACK_S,
+          xrayFrontAlpha: XRAY_FRONT_A, xrayBackAlpha: XRAY_BACK_A, xrayBodyAlpha: XRAY_BODY_A
+        };
+      },
       stats: function () { return lastStats; },
       destroy: destroy,
       // introspection (used by the self-test and by integrators)
@@ -675,7 +747,10 @@
     posToFacelet: posToFacelet,
     parseMove: parseMove,
     rotAxisQ: rotAxisQ,
-    FACE_NORMAL: FACE_NORMAL
+    FACE_NORMAL: FACE_NORMAL,
+    DEFAULTS: DEFAULTS,
+    LIGHT_FLOOR: LIGHT_FLOOR,
+    shadeK: shadeK
   };
 
   g.VCube3D = VCube3D;
@@ -783,12 +858,20 @@
 
     /* ---- stub canvas ---- */
     function stubCanvas(w, h) {
-      var calls = { fill: 0, stroke: 0 };
+      var calls = { fill: 0, stroke: 0, arcTo: 0, badAlpha: 0 };
       var ctx = {
-        fillStyle: '', strokeStyle: '', lineJoin: '', lineWidth: 0,
+        fillStyle: '', strokeStyle: '', lineJoin: '', lineWidth: 0, globalAlpha: 1,
         clearRect: function () { }, beginPath: function () { }, moveTo: function () { },
         lineTo: function () { }, closePath: function () { },
-        fill: function () { calls.fill++; }, stroke: function () { calls.stroke++; }
+        arcTo: function (x1, y1, x2, y2, r) {
+          calls.arcTo++;
+          // a real ctx throws on a negative radius; catch it here instead of at 60fps
+          if (!(r >= 0) || !isFinite(x1) || !isFinite(y1) || !isFinite(x2) || !isFinite(y2)) {
+            throw new Error('arcTo: bad args ' + [x1, y1, x2, y2, r]);
+          }
+        },
+        fill: function () { calls.fill++; if (!(this.globalAlpha > 0 && this.globalAlpha <= 1)) calls.badAlpha++; },
+        stroke: function () { calls.stroke++; }
       };
       return {
         width: w, height: h, clientWidth: w, clientHeight: h,
@@ -864,8 +947,152 @@
       assert('render: backface culling removes polys (drawn ' + st.polys + ' < 162, culled ' + st.culled + ')',
         st.polys < 162 && st.culled > 0);
       assert('render: fill() called once per polygon (' + cv._calls.fill + ')', cv._calls.fill >= st.polys);
-      assert('render: rounded stickers stroked (' + cv._calls.stroke + ' strokes)', cv._calls.stroke > 0);
+      assert('render: rounded stickers are traced with real arcs (' + cv._calls.arcTo + ' arcTo)',
+        cv._calls.arcTo > 0);
+      assert('render: no stroke pass — a rounded sticker is ONE filled path, so alpha ' +
+        'cannot double-composite into a rim (' + cv._calls.stroke + ' strokes)', cv._calls.stroke === 0);
+      assert('render: globalAlpha is restored to 1 after the pass (no leak into the next frame)',
+        cv.getContext().globalAlpha === 1);
       c.destroy();
+    })();
+
+    /* ---- 7b. lighting floor (item 8) ----
+     * The dimmest a sticker can ever render is shade(colour, shadeK(-1)). At the old 0.70
+     * floor that turned white into #b2b2b2 — grey against a white card — and yellow olive.
+     * These assertions pin the floor so a future "let's add some drama" cannot quietly
+     * un-fix the palette. */
+    (function () {
+      assert('light: LIGHT_FLOOR is 0.82 (an unlit face keeps 82% of its value)',
+        VCube3D.LIGHT_FLOOR === 0.82);
+      assert('light: shadeK(-1) === shadeK(0) === LIGHT_FLOOR (backfaces clamp, never go below)',
+        VCube3D.shadeK(-1) === 0.82 && VCube3D.shadeK(0) === 0.82 && VCube3D.shadeK(-0.5) === 0.82);
+      assert('light: shadeK(1) === 1 (a fully lit face is its true palette colour)',
+        VCube3D.shadeK(1) === 1);
+      var mono = true;
+      for (var t = -1; t < 1; t += 0.05) if (VCube3D.shadeK(t + 0.05) < VCube3D.shadeK(t) - 1e-12) mono = false;
+      assert('light: shadeK is monotonic non-decreasing over lit in [-1,1] (form survives)', mono);
+
+      // the whole point, stated as the number that matters: worst-case white must stay light.
+      function worst(hex) {
+        var v = parseInt(hex.slice(1), 16), k = VCube3D.shadeK(-1);
+        return [((v >> 16) & 255) * k, ((v >> 8) & 255) * k, v & 255 * 0 + (v & 255) * k];
+      }
+      var w = worst('#f2f4f6');
+      assert('light: the dimmest WHITE sticker stays >= 195/255 (got ' + Math.round(w[0]) +
+        ') — at the old 0.70 floor it was 169, i.e. grey', Math.round(w[0]) >= 195);
+      var y = worst('#ffd12e');
+      assert('light: the dimmest YELLOW keeps its red channel >= 200 (got ' + Math.round(y[0]) +
+        ') — at 0.70 it was 179 and read olive', Math.round(y[0]) >= 200);
+    })();
+
+    /* ---- 7c. sticker geometry defaults (item 8) ---- */
+    (function () {
+      var D = VCube3D.DEFAULTS;
+      assert('geometry: defaults are stickerSize 0.88 / stickerRadius 0.14 / cubieSize 0.96 ' +
+        '(0.80 left a fat black grid eating a third of the cube)',
+        D.stickerSize === 0.88 && D.stickerRadius === 0.14 && D.cubieSize === 0.96);
+      assert('geometry: stickers stay INSIDE their cubie face (stickerSize < 1) so the ' +
+        'hairline gap that reads as a real cube survives', D.stickerSize < 1 && D.cubieSize < 1);
+
+      var c = create(stubCanvas(400, 400), { duration: 0 });
+      var G = c.getGeometry();
+      assert('getGeometry(): reports the defaults when nothing is passed',
+        G.cubieSize === D.cubieSize && G.stickerSize === D.stickerSize &&
+        G.stickerRadius === D.stickerRadius && G.xrayBackAlpha === D.xrayBackAlpha);
+      // drawn size must equal (cubieSize/2) * stickerSize — the defaults are not decorative
+      var stk = c.render().list.filter(function (q) { return q.radius > 0; });
+      var want = (D.cubieSize / 2) * D.stickerSize;
+      assert('geometry: every drawn sticker is (cubieSize/2)*stickerSize = ' + want.toFixed(4) +
+        ' in world units', stk.length > 0 && stk.every(function (q) { return Math.abs(q.size - want) < 1e-9; }));
+      c.destroy();
+
+      var c2 = create(stubCanvas(400, 400), { duration: 0, stickerSize: 0.5, cubieSize: 0.8, stickerRadius: 0 });
+      assert('getGeometry(): opts override the defaults', c2.getGeometry().stickerSize === 0.5 &&
+        c2.getGeometry().cubieSize === 0.8 && c2.getGeometry().stickerRadius === 0);
+      assert('geometry: stickerRadius 0 is honoured, not swallowed as falsy',
+        c2.render().list.every(function (q) { return q.radius === 0; }));
+      c2.destroy();
+    })();
+
+    /* ---- 7d. see-through mode (item 17) ----
+     * The failure this guards against: far stickers at alpha 1 with no body = confetti.
+     * Front must dominate, back must be a hint, and the shell must be present. */
+    (function () {
+      var D = VCube3D.DEFAULTS;
+      assert('xray: back stickers are a HINT not a competitor (0.45), front stays opaque (1)',
+        D.xrayBackAlpha === 0.45 && D.xrayFrontAlpha === 1 && D.xrayBackAlpha < D.xrayFrontAlpha);
+      assert('xray: the body comes back faintly (0.10) — this is what 0.34 was missing, and ' +
+        'it is what makes a far sliver read as BEHIND rather than as noise',
+        D.xrayBodyAlpha === 0.10 && D.xrayBodyAlpha > 0 && D.xrayBodyAlpha < D.xrayBackAlpha);
+      assert('xray: far stickers shrink as a depth cue (0.92 < 1)',
+        D.xrayBackScale === 0.92 && D.xrayBackScale < 1);
+
+      var cv = stubCanvas(400, 400);
+      var c = create(cv, { duration: 0, xray: true });
+      var L = c.render().list;
+
+      assert('xray: nothing is culled — all 6 faces are drawn (' + c.stats().culled + ' culled)',
+        c.stats().culled === 0);
+
+      var bodies = L.filter(function (q) { return q.radius === 0; });
+      var stks = L.filter(function (q) { return q.radius > 0; });
+      assert('xray: exactly 54 stickers and 54 body quads are drawn — the body is the OUTER ' +
+        'shell only, never the 108 inner faces that would mud the far stickers into brown ' +
+        '(' + stks.length + ' stickers, ' + bodies.length + ' bodies)',
+        stks.length === 54 && bodies.length === 54);
+      assert('xray: every body quad is at alpha 0.10',
+        bodies.length > 0 && bodies.every(function (q) { return q.alpha === 0.10; }));
+
+      var front = stks.filter(function (q) { return q.alpha === 1; });
+      var back = stks.filter(function (q) { return q.alpha === 0.45; });
+      assert('xray: every sticker is either a front one (alpha 1) or a back one (alpha 0.45), ' +
+        'nothing in between (' + front.length + ' front + ' + back.length + ' back = 54)',
+        front.length + back.length === 54 && front.length === 27 && back.length === 27);
+
+      var fs = (D.cubieSize / 2) * D.xrayStickerSize;
+      assert('xray: front stickers use the xray gap size ' + fs.toFixed(4) + ' (wider gaps ARE ' +
+        'the window you see the back through)',
+        front.every(function (q) { return Math.abs(q.size - fs) < 1e-9; }));
+      assert('xray: back stickers are drawn ' + fs.toFixed(4) + ' * 0.92 = ' +
+        (fs * D.xrayBackScale).toFixed(4) + ' — strictly smaller than every front sticker',
+        back.length > 0 && back.every(function (q) { return Math.abs(q.size - fs * D.xrayBackScale) < 1e-9; }) &&
+        Math.max.apply(null, back.map(function (q) { return q.size; })) <
+        Math.min.apply(null, front.map(function (q) { return q.size; })));
+
+      assert('xray: draw order is still farthest-first — alpha compositing is only correct ' +
+        'in that order', (function () {
+          for (var i = 1; i < L.length; i++) if (L[i].depth > L[i - 1].depth + 1e-9) return false;
+          return true;
+        })());
+      assert('xray: no poly is ever drawn at alpha 0 or a bogus alpha', cv._calls.badAlpha === 0);
+
+      // toggling back off must restore a fully opaque, culled cube
+      c.setXray(false);
+      var L2 = c.render().list;
+      assert('xray: setXray(false) restores full opacity everywhere',
+        L2.every(function (q) { return q.alpha === 1; }) && c.stats().culled > 0);
+      assert('xray: setXray(false) draws the body for inner cubie faces again (the ones you ' +
+        'glimpse through the gaps) — ' + L2.filter(function (q) { return q.radius === 0; }).length +
+        ' body quads > 54', L2.filter(function (q) { return q.radius === 0; }).length > 54);
+      c.destroy();
+
+      // alphas are opts, so a settings panel can drive them without a rebuild of the engine
+      var c3 = create(stubCanvas(400, 400), { duration: 0, xray: true, xrayBodyAlpha: 0 });
+      assert('xray: xrayBodyAlpha 0 is honoured (not falsy-swallowed) and skips the shell ' +
+        'entirely', c3.getGeometry().xrayBodyAlpha === 0 &&
+        c3.render().list.every(function (q) { return q.radius > 0; }));
+      c3.destroy();
+
+      // 2x2 and 4x4 must not hardcode 54
+      [2, 4].forEach(function (nn) {
+        var cn = create(stubCanvas(300, 300), { size: nn, duration: 0, xray: true });
+        var Ln = cn.render().list;
+        var want = 6 * nn * nn;
+        assert(nn + 'x' + nn + ' xray: ' + want + ' stickers + ' + want + ' shell quads',
+          Ln.filter(function (q) { return q.radius > 0; }).length === want &&
+          Ln.filter(function (q) { return q.radius === 0; }).length === want);
+        cn.destroy();
+      });
     })();
 
     /* ---- 8. painter's order ---- */

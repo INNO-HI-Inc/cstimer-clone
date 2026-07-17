@@ -165,8 +165,14 @@
     '.vcClose{align-self:flex-start;margin-left:4px;}',
     /* cube-only fullscreen: everything except the canvas and a small clock gets out */
     '.vcFull{background:var(--bg);padding:0!important;gap:0!important;}',
-    '.vcFull .vcFoot,.vcFull .vcPad,.vcFull .vcLegend,.vcFull .vcScr,.vcFull .vcClose,',
+    '.vcFull .vcFoot,.vcFull .vcPad,.vcFull .vcLegend,.vcFull .vcScr,',
     '.vcFull .vcHint{display:none!important;}',
+    /* the way out. Hiding this was the bug: Esc works but nothing said so, and on a phone
+     * there is no Esc at all. Floats over the cube, always reachable. */
+    '.vcFull .vcClose{display:block!important;position:absolute;top:12px;right:14px;z-index:3;',
+    'width:44px;height:44px;border-radius:50%;background:var(--card);box-shadow:var(--shadow-card);',
+    'font-size:16px;opacity:.85;}',
+    '.vcFull .vcClose:hover{opacity:1;}',
     '.vcFull .vcHead{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:2;',
     'margin:0;padding:0;pointer-events:none;}',
     '.vcFull .vcLcd{font-size:34px;opacity:.85;}',
@@ -316,7 +322,11 @@
     ui.close.className = 'icon ghost vcClose';
     ui.close.innerHTML = '&#10005;';
     ui.close.title = T('vcubeClose', '닫기 (Esc)', 'close (Esc)');
-    ui.close.addEventListener('click', closeCubeView);
+    ui.close.addEventListener('click', function () {
+      /* in fullscreen the ✕ means "get me out of fullscreen", not "quit the cube" */
+      if (inFull()) { toggleFull(); return; }
+      leave();
+    });
     head.appendChild(ui.close);
     body.appendChild(head);
 
@@ -410,6 +420,7 @@
     if (ui.scr) ui.scr.style.display = isPaneHost() ? 'none' : '';
     /* the modal already has a ✕; only a bare pane needs ours */
     if (ui.close) ui.close.style.display = isPaneHost() ? '' : 'none';
+    if (ui.close) ui.close.title = T('vcubeClose', '닫기 (Esc)', 'close (Esc)');
   }
 
   /* NB: must NOT be expressed as `host !== M.body` — App.registerModal() invokes its build
@@ -673,6 +684,29 @@
     }
   }
 
+  /* Giving up on a live attempt is a DNF, not a solve that never happened — record it so
+   * the session tells the truth. (Esc still discards outright: that is "I mis-clicked".) */
+  function endAttempt() {
+    if (st.phase !== 'running') return;
+    var ms = Math.max(0, Math.round(Date.now() - st.startTs));
+    st.phase = 'done';
+    stopLoop();
+    st.pen = 0;
+    lcd('DNF', '');
+    if (ui.lcd) ui.lcd.classList.add('vcDone');
+    record(-1, ms);
+    showScramble();
+    setHint(T('vcubeEnded', '종료 (DNF) — Space 로 나갑니다.', 'ended (DNF) — Space to leave.'));
+    App.toast && App.toast(T('vcubeEndedT', 'DNF로 기록했어요', 'recorded as DNF'));
+  }
+
+  /* Leave the cube: the view on desktop / the modal on mobile. */
+  function leave() {
+    if (cubeViewOpen()) { closeCubeView(); return; }
+    unmount();
+    App.closeModals && App.closeModals();
+  }
+
   /* ---- moves ---- */
   function doMove(token, rotation, ts) {
     if (!eng || !token) return;
@@ -754,12 +788,10 @@
 
     if (e.code === 'Space') {
       e.preventDefault(); e.stopPropagation();
-      /* Never let Space silently bin a live attempt — that is someone's solve. */
-      if (st.phase === 'running') {
-        App.toast && App.toast(T('vcubeSpaceRun', '측정 중입니다. Esc 로 취소하세요.',
-          'solve in progress — press Esc to cancel.'), { type: 'error' });
-        return;
-      }
+      /* Space always means "finish": end a live attempt (as a DNF — you gave up, that is a
+       * DNF, not a solve that never happened), and leave once you are done. */
+      if (st.phase === 'running') { endAttempt(); return; }
+      if (st.phase === 'done') { leave(); return; }
       applyScramble();
       return;
     }
