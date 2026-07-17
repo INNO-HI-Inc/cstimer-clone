@@ -105,11 +105,55 @@
                             // ~a third of the cube; real stickerless cubes are hairline-gapped
     stickerRadius: 0.14,    // corner radius, fraction of a cubie
     xrayStickerSize: 0.86,  // see-through mode uses wider gaps — they ARE the window
-    xrayBackScale: 0.92,    // far stickers drawn slightly smaller: a depth cue, not a mistake
-    xrayFrontAlpha: 1,      // the near face must dominate...
-    xrayBackAlpha: 0.45,    // ...and the far face is a hint you glance at, not a competitor
-    xrayBodyAlpha: 0.10     // a faint shell so far slivers read as BEHIND, not as confetti
+    /* See-through: the far side is drawn EXACTLY like the near side — same colour, same
+     * opacity, same size, no shell behind it. Every attempt to "help" here by fading,
+     * shrinking or shading the back was rejected: the point is to read the back's colours,
+     * and anything that dims them defeats it. The gaps and the depth sort do the work. */
+    xrayBackScale: 1,
+    xrayFrontAlpha: 1,
+    xrayBackAlpha: 1,
+    xrayBodyAlpha: 0
   };
+
+  /* STYLES — how the cube is BUILT, as opposed to what colours it wears (that is the palette
+   * in draw_nnn.js). A style is just a partial opts overlay; create() merges it under the
+   * caller's own opts, so an explicit opt always wins.
+   *
+   * These are the real finishes a cuber recognises:
+   *  - stickerless: modern flagship. Colour IS the plastic, hairline gaps, soft edges.
+   *  - stickered:   the old black-plastic cube. Fat black grid, small glossy stickers.
+   *  - flat:        our Toss-native look. No body, no bevel, generous radius.
+   *  - carbon:      black carbon-fibre body, tight bright stickers.
+   *  - pillow:      rounded, toy-like: big radius, chunky gaps.
+   * setStyle() sets the default every NEW instance adopts; live instances take it via apply(). */
+  var STYLES = [
+    /* colour IS the plastic: hairline gaps, soft corners. This one deliberately carries the
+     * SAME numbers as DEFAULTS — it is the default style, so "pass nothing" and "pick
+     * stickerless" must be the same cube, and the self-test asserts exactly that. */
+    { id: 'stickerless', ko: '스티커리스', en: 'Stickerless',
+      opts: {
+        cubieSize: DEFAULTS.cubieSize, stickerSize: DEFAULTS.stickerSize,
+        stickerRadius: DEFAULTS.stickerRadius, bodyColor: '#12151a'
+      } },
+    /* the old black cube: a fat black grid with small glossy stickers floating in it */
+    { id: 'stickered', ko: '스티커', en: 'Stickered',
+      opts: { cubieSize: 0.90, stickerSize: 0.66, stickerRadius: 0.14, bodyColor: '#08090c' } },
+    /* Toss-native: no black at all, the gaps take the page's own surface colour */
+    { id: 'flat', ko: '플랫', en: 'Flat',
+      opts: { cubieSize: 1.0, stickerSize: 0.86, stickerRadius: 0.30, bodyColor: '#e8ebf0' } },
+    /* sharp, technical, near-black: square corners, tight tiles */
+    { id: 'carbon', ko: '카본', en: 'Carbon',
+      opts: { cubieSize: 0.99, stickerSize: 0.90, stickerRadius: 0.02, bodyColor: '#04060a' } },
+    /* chunky toy: rounded to the point of being pill-shaped, thick gaps */
+    { id: 'pillow', ko: '필로우', en: 'Pillow',
+      opts: { cubieSize: 0.82, stickerSize: 0.92, stickerRadius: 0.44, bodyColor: '#1b1f26' } }
+  ];
+  var styleId = 'stickerless';
+  function styleById(id) {
+    for (var i = 0; i < STYLES.length; i++) if (STYLES[i].id === id) return STYLES[i];
+    return null;
+  }
+  var live = [];   // instances that adopt a style change without being rebuilt
 
   /* ------------------------------------------------- facelet <-> 3D space */
 
@@ -235,6 +279,14 @@
     opts = opts || {};
     if (!NNN) throw new Error('vcube3d: ScrImage.nnn (js/draw_nnn.js) is required');
 
+    /* The active style is an overlay UNDER the caller's opts: pass nothing and you get the
+     * style; pass stickerSize and yours wins. Read at create time so a style set before this
+     * instance existed still applies. */
+    var stOpts = (styleById(styleId) || {}).opts || {};
+    Object.keys(stOpts).forEach(function (k) {
+      if (opts[k] === undefined) opts[k] = stOpts[k];
+    });
+
     var n = opts.size || 3;
     var palette = (opts.palette || NNN.colors).slice();
     var body = opts.bodyColor || '#12151a';
@@ -250,22 +302,15 @@
     var pitch = opts.pitch == null ? 37.5 : opts.pitch;
     /* SEE-THROUGH ("사이로 뒷면이 보이게") — a GLANCE at the far side, not a second cube.
      *
-     * History, because both previous attempts were wrong in opposite directions:
+     * History, because every attempt to be clever here was rejected in turn:
      *   - a real second cube for the back view was 어지러워 (dizzying) — killed;
-     *   - fading everything to 0.34 "made the colours unreadable" — true, so it was reverted
-     *     to 1.0, which is the other cliff: far stickers at FULL opacity carry the same
-     *     visual weight as near ones, and with the body not drawn at all there is no
-     *     geometry left to say which sliver sits behind what. The result reads as confetti.
-     *
-     * The fix is not a number, it is three cues working together:
-     *   1. the near face stays fully opaque and wins (xrayFrontAlpha = 1);
-     *   2. the far face is a hint (xrayBackAlpha = 0.45) — legible, never competing;
-     *   3. a FAINT body (xrayBodyAlpha = 0.10) comes back. This is the part 0.34 was
-     *      missing: it restores the cube's edges, so a far sliver reads as BEHIND the
-     *      shell rather than as noise floating in space.
-     * Plus a fourth, size: far stickers shrink slightly (xrayBackScale), which is the
-     * same depth cue perspective would give them if they weren't drawn through the front.
-     * The existing far-to-near depth sort is already exactly the order alpha needs. */
+     *   - fading the whole cube made the colours unreadable — killed;
+     *   - fading/shrinking only the FAR stickers (0.45 alpha, 0.92 scale, faint shell) was
+     *     rejected too: "큐브 뒤에 어둡게 할 필요 없어 뒤도 앞이랑 똑같이".
+     * The settled rule: the back is drawn IDENTICALLY to the front. You are looking through
+     * the gaps at real stickers, so they get their real colour. Depth is carried by the
+     * far-to-near sort and by the near stickers occluding them — not by dimming.
+     * The only knob is gap width (setXrayGap), because that is what you look through. */
     var xray = !!opts.xray;
     var XRAY_BODY_A = num(opts.xrayBodyAlpha, DEFAULTS.xrayBodyAlpha);
     var XRAY_BACK_A = num(opts.xrayBackAlpha, DEFAULTS.xrayBackAlpha);
@@ -675,8 +720,23 @@
 
     /* ---- lifecycle ------------------------------------------------------ */
 
+    /* Adopt a style overlay without rebuilding: the geometry vars are plain locals, so a
+     * live instance can just take the new numbers and repaint. Cubie geometry is rebuilt
+     * because cubieSize feeds the cubie centres. */
+    function applyStyle(o) {
+      if (!o) return api;
+      if (typeof o.bodyColor === 'string') body = o.bodyColor;
+      cubieSize = num(o.cubieSize, cubieSize);
+      stickerSize = num(o.stickerSize, stickerSize);
+      stickerRadius = num(o.stickerRadius, stickerRadius);
+      render();
+      return api;
+    }
+
     function destroy() {
       dead = true;
+      var li = live.indexOf(api);
+      if (li >= 0) live.splice(li, 1);
       views.length = 0;
       if (raf && g.cancelAnimationFrame) g.cancelAnimationFrame(raf);
       raf = 0; queue.length = 0; canvas = null;
@@ -690,6 +750,7 @@
       isAnimating: function () { return queue.length > 0; },
       pending: function () { return queue.length; },
       render: render,
+      applyStyle: applyStyle,
       // Extra canvases fed by this same state — e.g. a back view at dYaw:180.
       // One state, N angles: they cannot drift the way two engines would.
       addView: addView,
@@ -738,10 +799,25 @@
       colorAt: function (p, nm) { var fc = posToFacelet(p, nm, n); return fc ? state[fc.f][fc.r * n + fc.c] : -1; }
     };
     render();
+    live.push(api);
     return api;
   }
 
+  /* Module-level style: setStyle changes the default for every future instance AND
+   * repaints the live ones, so a settings change lands immediately on the cube you are
+   * looking at without tearing its state down. */
+  function setStyle(id) {
+    var st = styleById(id);
+    if (!st) return false;
+    styleId = id;
+    live.slice().forEach(function (a) { try { a.applyStyle(st.opts); } catch (e) { } });
+    return true;
+  }
+
   var VCube3D = {
+    styles: STYLES,
+    setStyle: setStyle,
+    getStyle: function () { return styleId; },
     create: create,
     faceletToPos: faceletToPos,
     posToFacelet: posToFacelet,
@@ -1019,13 +1095,11 @@
      * Front must dominate, back must be a hint, and the shell must be present. */
     (function () {
       var D = VCube3D.DEFAULTS;
-      assert('xray: back stickers are a HINT not a competitor (0.45), front stays opaque (1)',
-        D.xrayBackAlpha === 0.45 && D.xrayFrontAlpha === 1 && D.xrayBackAlpha < D.xrayFrontAlpha);
-      assert('xray: the body comes back faintly (0.10) — this is what 0.34 was missing, and ' +
-        'it is what makes a far sliver read as BEHIND rather than as noise',
-        D.xrayBodyAlpha === 0.10 && D.xrayBodyAlpha > 0 && D.xrayBodyAlpha < D.xrayBackAlpha);
-      assert('xray: far stickers shrink as a depth cue (0.92 < 1)',
-        D.xrayBackScale === 0.92 && D.xrayBackScale < 1);
+      // The rule (settled after fading/shrinking the back was rejected): back == front.
+      assert('xray: the back is drawn IDENTICALLY to the front — same alpha, same size',
+        D.xrayBackAlpha === 1 && D.xrayFrontAlpha === 1 && D.xrayBackScale === 1);
+      assert('xray: no shell behind the far stickers — nothing may dim their colour',
+        D.xrayBodyAlpha === 0);
 
       var cv = stubCanvas(400, 400);
       var c = create(cv, { duration: 0, xray: true });
@@ -1036,28 +1110,18 @@
 
       var bodies = L.filter(function (q) { return q.radius === 0; });
       var stks = L.filter(function (q) { return q.radius > 0; });
-      assert('xray: exactly 54 stickers and 54 body quads are drawn — the body is the OUTER ' +
-        'shell only, never the 108 inner faces that would mud the far stickers into brown ' +
-        '(' + stks.length + ' stickers, ' + bodies.length + ' bodies)',
-        stks.length === 54 && bodies.length === 54);
-      assert('xray: every body quad is at alpha 0.10',
-        bodies.length > 0 && bodies.every(function (q) { return q.alpha === 0.10; }));
+      assert('xray: all 54 stickers are drawn and NO body at all — the body is the shell ' +
+        'between you and the far stickers (' + stks.length + ' stickers, ' + bodies.length + ' bodies)',
+        stks.length === 54 && bodies.length === 0);
 
-      var front = stks.filter(function (q) { return q.alpha === 1; });
-      var back = stks.filter(function (q) { return q.alpha === 0.45; });
-      assert('xray: every sticker is either a front one (alpha 1) or a back one (alpha 0.45), ' +
-        'nothing in between (' + front.length + ' front + ' + back.length + ' back = 54)',
-        front.length + back.length === 54 && front.length === 27 && back.length === 27);
+      var opaque = stks.filter(function (q) { return q.alpha === 1; });
+      assert('xray: every sticker — near and far alike — is fully opaque (' + opaque.length + '/54)',
+        opaque.length === 54);
 
       var fs = (D.cubieSize / 2) * D.xrayStickerSize;
-      assert('xray: front stickers use the xray gap size ' + fs.toFixed(4) + ' (wider gaps ARE ' +
-        'the window you see the back through)',
-        front.every(function (q) { return Math.abs(q.size - fs) < 1e-9; }));
-      assert('xray: back stickers are drawn ' + fs.toFixed(4) + ' * 0.92 = ' +
-        (fs * D.xrayBackScale).toFixed(4) + ' — strictly smaller than every front sticker',
-        back.length > 0 && back.every(function (q) { return Math.abs(q.size - fs * D.xrayBackScale) < 1e-9; }) &&
-        Math.max.apply(null, back.map(function (q) { return q.size; })) <
-        Math.min.apply(null, front.map(function (q) { return q.size; })));
+      assert('xray: EVERY sticker uses the xray gap size ' + fs.toFixed(4) + ' — the back is ' +
+        'not shrunk, the gaps alone are the window you see it through',
+        stks.length === 54 && stks.every(function (q) { return Math.abs(q.size - fs) < 1e-9; }));
 
       assert('xray: draw order is still farthest-first — alpha compositing is only correct ' +
         'in that order', (function () {
@@ -1088,9 +1152,9 @@
         var cn = create(stubCanvas(300, 300), { size: nn, duration: 0, xray: true });
         var Ln = cn.render().list;
         var want = 6 * nn * nn;
-        assert(nn + 'x' + nn + ' xray: ' + want + ' stickers + ' + want + ' shell quads',
+        assert(nn + 'x' + nn + ' xray: ' + want + ' stickers, no shell (scales off 54)',
           Ln.filter(function (q) { return q.radius > 0; }).length === want &&
-          Ln.filter(function (q) { return q.radius === 0; }).length === want);
+          Ln.filter(function (q) { return q.radius === 0; }).length === 0);
         cn.destroy();
       });
     })();

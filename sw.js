@@ -20,7 +20,7 @@
  */
 'use strict';
 
-var CACHE_VERSION = 'v1.10.0';
+var CACHE_VERSION = 'v1.11.0';
 var CACHE_NAME = 'cstc-clone-' + CACHE_VERSION;
 var CACHE_PREFIX = 'cstc-clone-';
 
@@ -50,7 +50,8 @@ var CORE = [
   './js/feat_tools.js',
   './js/feat_share.js',
   './js/vcube3d.js',
-  './js/feat_vcube.js'
+  './js/feat_vcube.js',
+  './js/feat_vcube_style.js'
 ];
 
 /* OPTIONAL — nice to have, never worth failing an install over.

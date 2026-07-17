@@ -8,7 +8,62 @@
 (function (g) {
   'use strict';
 
-  var COLORS = ['#ffffff', '#ee0000', '#00d800', '#ffff00', '#ff8000', '#0000f2'];
+  /* PALETTES ---------------------------------------------------------------
+   * Face order is always U,R,F,D,L,B. The scheme never changes (U white, R red,
+   * F green, D yellow, L orange, B blue) — only the shades do.
+   *
+   * Why these shades: red and orange sit only ~28 deg apart in hue, so hue alone
+   * cannot separate them. Pixels sampled off product photos of a real GAN 356 R and
+   * MoYu RS3M show the trick real cubes use — LIGHTNESS:
+   *     GAN red    #c2353d  L*=44.7  hue=27.5      GAN orange #fe781c  L*=65.4  hue=55.4
+   *     GAN green  #078f55  L*=52.2  hue=154.7     MoYu blue  #276ca4  L*=44.0  hue=267.4
+   * (Lab hues; the sampled L* of green/blue reads low because those faces were shadowed
+   * in the photos — hue and chroma are the trustworthy signal from a photograph.)
+   * Note green ~155 and blue ~267: real cube plastic is emerald and azure, NOT the
+   * #00d800 / #0000f2 primaries the old palette used. That is most of the "cheap" look.
+   *
+   * The engine renders each face at a brightness multiplier down to 0.70 (vcube3d.js
+   * :533), so every pair must stay separable at 0.70 as well as 1.00. Verified with a
+   * CIEDE2000 matrix under normal vision and under simulated deuteranopia/protanopia:
+   *
+   *   palette      min dE normal (1.00/0.70)   min dE colour-blind
+   *   old toy          23.1 / 19.8                 1.9   <- green==orange to a deuteranope
+   *   toss (default)   33.2 / 29.1                13.9
+   *   cvd (safe)             19.1                 19.2
+   *
+   * A green leaning slightly teal (hue ~163) is deliberate: teal keeps blue content, and
+   * the blue-yellow axis is the one red-green colour blindness preserves. It is what buys
+   * 1.9 -> 13.9 at no cost to how the cube looks. */
+  var PALETTES = [
+    { id: 'toss', ko: '토스 톤', en: 'Toss tone',
+      colors: ['#f4f6fa', '#ad1338', '#14b07d', '#f8de10', '#ee7a10', '#2b7cc4'] },
+    { id: 'classic', ko: 'csTimer 클래식', en: 'csTimer classic',
+      colors: ['#ffffff', '#ee0000', '#00d800', '#ffff00', '#ff8000', '#0000f2'] },
+    { id: 'cvd', ko: '색약 안전', en: 'Colour-blind safe',
+      colors: ['#f9f9f9', '#b61d52', '#32afab', '#f7ee01', '#ec8556', '#1666c6'] }
+  ];
+
+  function paletteById(id) {
+    for (var i = 0; i < PALETTES.length; i++) if (PALETTES[i].id === id) return PALETTES[i];
+    return null;
+  }
+
+  /* The default. The 3D engine reads ScrImage.nnn.colors as its default palette, so the
+   * 2D net and the virtual cube stay in step from this one array. */
+  var COLORS = PALETTES[0].colors;
+
+  /* Switch the active palette. Rebinds COLORS (paint() reads the variable, so every later
+   * draw picks it up) and re-points api.colors at it, which is what the 3D engine reads as
+   * its default. NB: this must NOT mutate the chosen palette's array in place — api.colors
+   * and PALETTES[i].colors are the same reference, so an in-place edit would corrupt the
+   * preset it came from. */
+  function setPalette(id) {
+    var p = paletteById(id);
+    if (!p) return false;
+    COLORS = p.colors;
+    api.colors = COLORS;
+    return true;
+  }
 
   function solved(n) {
     var s = [];
@@ -121,11 +176,12 @@
     return s;
   }
 
-  function draw(canvas, scramble, n, colors) {
+  /* Paint a facelet array as a flat net. The single painting path behind both
+   * draw() (which scrambles first) and drawState() (which does not). */
+  function paint(canvas, s, n, colors) {
     var ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    var s = apply(solved(n), n, scramble);
     var pal = colors || COLORS;
     var margin = 6;
     var u = Math.min((canvas.width - margin * 2) / (4 * n), (canvas.height - margin * 2) / (3 * n));
@@ -143,11 +199,31 @@
     }
   }
 
+  function draw(canvas, scramble, n, colors) {
+    paint(canvas, apply(solved(n), n, scramble), n, colors);
+  }
+
+  /* Paint a facelet array straight through, skipping apply(). `state` is the
+   * [6][n*n] U,R,F,D,L,B layout that solved()/apply() produce — which is exactly what
+   * the 3D engine's getState() hands back, so a live cube can be mirrored into a 2D net
+   * inset with no adaptation:  eng.onTurn(function(){ drawState(cv, eng.getState()); })
+   * `n` is optional: it is derived from the state when omitted. */
+  function drawState(canvas, state, n, colors) {
+    if (!state || state.length !== 6 || !state[0]) return;
+    if (!n) n = Math.round(Math.sqrt(state[0].length));
+    if (!(n > 0) || state[0].length !== n * n) return;
+    paint(canvas, state, n, colors);
+  }
+
   var api = {
     solved: solved,
     apply: apply,
     draw: draw,
-    colors: COLORS
+    drawState: drawState,
+    colors: COLORS,
+    palettes: PALETTES,
+    paletteById: paletteById,
+    setPalette: setPalette
   };
 
   g.ScrImage = g.ScrImage || {};
@@ -213,6 +289,98 @@
     var threw = false;
     try { draw(stub, "R U Rw' 3Fw2 x y' garbage", 7); } catch (e) { threw = true; }
     assert('draw() robust on 7x7 with junk token', !threw);
+
+    /* ---- palettes ---- */
+    var HEX = /^#[0-9a-f]{6}$/;
+    assert('3 named palettes exported', PALETTES.length === 3);
+    assert('palette ids are toss/classic/cvd',
+      eq(PALETTES.map(function (p) { return p.id; }), ['toss', 'classic', 'cvd']));
+    assert('every palette has 6 lowercase hex colours in U,R,F,D,L,B order',
+      PALETTES.every(function (p) { return p.colors.length === 6 && p.colors.every(function (c) { return HEX.test(c); }); }));
+    assert('every palette carries a ko + en label',
+      PALETTES.every(function (p) { return !!p.ko && !!p.en; }));
+    assert('default colors === palettes[0] (toss tone)', api.colors === PALETTES[0].colors);
+    assert('paletteById finds each palette',
+      PALETTES.every(function (p) { return paletteById(p.id) === p; }));
+    // setPalette must REBIND, never mutate: api.colors and PALETTES[i].colors are the same
+    // array, so an in-place edit here would silently corrupt the preset it came from.
+    var snap = PALETTES.map(function (p) { return p.colors.slice(); });
+    assert('setPalette switches the active palette', setPalette('classic') && api.colors === paletteById('classic').colors);
+    assert('setPalette(bad id) is a no-op', !setPalette('nope') && api.colors === paletteById('classic').colors);
+    var cv = { width: 40, height: 40, getContext: function () { var o = {}; ['clearRect','fillRect','strokeRect','beginPath','moveTo','lineTo','closePath','fill','stroke','save','restore'].forEach(function (k) { o[k] = function () {}; }); return o; } };
+    draw(cv, 'R U', 3);
+    assert('presets survive a palette switch + draw (no in-place mutation)',
+      PALETTES.every(function (p, i) { return JSON.stringify(p.colors) === JSON.stringify(snap[i]); }));
+    setPalette(PALETTES[0].id);
+    assert('paletteById(unknown) === null', paletteById('nope') === null);
+    assert('classic palette preserves the historical csTimer shades',
+      eq(paletteById('classic').colors, ['#ffffff', '#ee0000', '#00d800', '#ffff00', '#ff8000', '#0000f2']));
+    // The whole point of the shade work: red and orange must never collide. Guard the
+    // property (a real lightness gap), not the literal hex, so retuning stays free.
+    function lum(hex) { // sRGB relative luminance
+      var v = parseInt(hex.slice(1), 16), o = [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+      var l = o.map(function (c) { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); });
+      return 0.2126 * l[0] + 0.7152 * l[1] + 0.0722 * l[2];
+    }
+    ['toss', 'cvd'].forEach(function (id) {
+      var c = paletteById(id).colors;
+      assert(id + ': red(R) is clearly darker than orange(L) — the real-cube separation',
+        lum(c[4]) - lum(c[1]) > 0.15);
+      assert(id + ': all 6 shades distinct', new Set(c).size === 6);
+    });
+
+    /* ---- drawState ---- */
+    function recStub(n) {
+      var fills = [];
+      return {
+        width: 420, height: 300, fills: fills,
+        getContext: function () {
+          var o = { fillStyle: null };
+          o.clearRect = function () { };
+          o.strokeRect = function () { };
+          o.fillRect = function () { fills.push(o.fillStyle); };
+          return o;
+        }
+      };
+    }
+    var scr = "R U R' F2 Lw' x y2 D";
+    // drawState(state) must paint exactly what draw(scramble) paints for that same state.
+    var a = recStub(), b = recStub();
+    draw(a, scr, 3);
+    drawState(b, apply(solved(3), 3, scr), 3);
+    assert('drawState() paints identically to draw() for the same state',
+      a.fills.length === 54 && eq(a.fills, b.fills));
+    var c4a = recStub(), c4b = recStub();
+    draw(c4a, 'Rw U2 F', 4);
+    drawState(c4b, apply(solved(4), 4, 'Rw U2 F'), 4);
+    assert('drawState() matches draw() on 4x4 (96 facelets)',
+      c4a.fills.length === 96 && eq(c4a.fills, c4b.fills));
+    var dn = recStub();
+    drawState(dn, solved(5));
+    assert('drawState() derives n from the state when n is omitted', dn.fills.length === 150);
+    var dp = recStub();
+    drawState(dp, solved(3), 3, paletteById('classic').colors);
+    assert('drawState() honours a custom palette', dp.fills.every(function (f) {
+      return paletteById('classic').colors.indexOf(f) >= 0;
+    }) && dp.fills[0] === '#ffffff');
+    var dsolved = recStub();
+    drawState(dsolved, solved(3), 3);
+    assert('drawState() on a solved cube paints 9 of each face colour',
+      COLORS.every(function (c) {
+        return dsolved.fills.filter(function (f) { return f === c; }).length === 9;
+      }));
+    // getState() from the 3D engine is this exact layout — mirror it without adaptation.
+    var st = apply(solved(3), 3, 'U R');
+    var mirror = recStub();
+    drawState(mirror, st, 3);
+    assert('drawState() does not mutate the state it is handed', eq(st, apply(solved(3), 3, 'U R')));
+    var badThrew = false;
+    try {
+      drawState(recStub(), null); drawState(recStub(), []); drawState(recStub(), [[], [], [], [], [], []]);
+      drawState(recStub(), 'nonsense'); drawState(recStub(), solved(3), 99);
+    } catch (e) { badThrew = true; }
+    assert('drawState() robust on malformed state', !badThrew);
+
     process.exit(fails ? 1 : 0);
   }
 })(typeof window !== 'undefined' ? window : globalThis);

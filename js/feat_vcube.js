@@ -162,17 +162,18 @@
     '.vcStage canvas{display:block;touch-action:none;cursor:grab;}',
     /* two-cube (front + back) layout; gap only, sizing is done in fitCanvas() */
     '.vcLcd.vcDone{color:var(--green);}',
-    '.vcClose{align-self:flex-start;margin-left:4px;}',
+    '.vcClose{position:absolute;top:10px;right:10px;z-index:3;width:36px;height:36px;',
+    'border-radius:50%;background:var(--card);box-shadow:var(--shadow-card);font-size:13px;',
+    'opacity:.75;padding:0;}',
+    '.vcClose:hover{opacity:1;background:var(--card);}',
     /* cube-only fullscreen: everything except the canvas and a small clock gets out */
     '.vcFull{background:var(--bg);padding:0!important;gap:0!important;}',
     '.vcFull .vcFoot,.vcFull .vcPad,.vcFull .vcLegend,.vcFull .vcScr,',
     '.vcFull .vcHint{display:none!important;}',
     /* the way out. Hiding this was the bug: Esc works but nothing said so, and on a phone
      * there is no Esc at all. Floats over the cube, always reachable. */
-    '.vcFull .vcClose{display:block!important;position:absolute;top:12px;right:14px;z-index:3;',
-    'width:44px;height:44px;border-radius:50%;background:var(--card);box-shadow:var(--shadow-card);',
-    'font-size:16px;opacity:.85;}',
-    '.vcFull .vcClose:hover{opacity:1;}',
+    /* fullscreen: same corner, bigger touch target (no Esc on a phone) */
+    '.vcFull .vcClose{display:block!important;width:44px;height:44px;font-size:16px;opacity:.85;}',
     '.vcFull .vcHead{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:2;',
     'margin:0;padding:0;pointer-events:none;}',
     '.vcFull .vcLcd{font-size:34px;opacity:.85;}',
@@ -327,7 +328,6 @@
       if (inFull()) { toggleFull(); return; }
       leave();
     });
-    head.appendChild(ui.close);
     body.appendChild(head);
 
     ui.stage = document.createElement('div'); ui.stage.className = 'vcStage';
@@ -338,6 +338,10 @@
 
     ui.hint = document.createElement('div'); ui.hint.className = 'vcHint';
     ui.stage.appendChild(ui.hint);
+    /* The ✕ floats over the cube's top-right rather than sharing the header row with the
+     * clock — sitting level with the timer read as if it belonged to it. Same home in
+     * fullscreen, so it never moves on you. */
+    ui.stage.appendChild(ui.close);
     body.appendChild(ui.stage);
 
     ui.pad = document.createElement('div'); ui.pad.className = 'vcPad';
