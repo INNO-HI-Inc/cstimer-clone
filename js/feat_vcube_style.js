@@ -44,7 +44,10 @@
     list.forEach(function (o) {
       var op = document.createElement('option');
       op.value = o.id;
-      op.textContent = App.lang && App.lang() === 'ko' ? o.ko : o.en;
+      /* Route through App.i18n rather than picking o.ko/o.en by hand: i18n RECORDS the
+       * key + pair, which is what lets the settings sheet re-translate itself when the
+       * language changes. Reading App.lang() here froze these labels at boot. */
+      op.textContent = App.i18n('vcOpt_' + o.id, o.ko, o.en);
       sel.appendChild(op);
     });
     sel.value = cur;
