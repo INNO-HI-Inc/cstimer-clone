@@ -161,9 +161,8 @@
     'background:var(--card2);border-radius:var(--radius-card);position:relative;overflow:hidden;}',
     '.vcStage canvas{display:block;touch-action:none;cursor:grab;}',
     /* two-cube (front + back) layout; gap only, sizing is done in fitCanvas() */
-    '.vcStage.vcTwo{gap:8px;}',
-    '.vcBack{opacity:.97;}',
     '.vcLcd.vcDone{color:var(--green);}',
+    '.vcClose{align-self:flex-start;margin-left:4px;}',
     '.vcStage canvas:active{cursor:grabbing;}',
     '.vcHint{position:absolute;left:0;right:0;bottom:8px;text-align:center;color:var(--sub);',
     'font-size:12px;pointer-events:none;padding:0 10px;}',
@@ -303,6 +302,14 @@
     ui.scr = document.createElement('div'); ui.scr.className = 'vcScr';
     ui.lcd = document.createElement('div'); ui.lcd.className = 'vcLcd'; ui.lcd.textContent = '0.00';
     head.appendChild(ui.scr); head.appendChild(ui.lcd);
+    /* A view has no modal chrome, so it must carry its own way out. Mobile leaves via the
+     * tab bar, so this is desktop-only. */
+    ui.close = document.createElement('button');
+    ui.close.className = 'icon ghost vcClose';
+    ui.close.innerHTML = '&#10005;';
+    ui.close.title = T('vcubeClose', '닫기 (Esc)', 'close (Esc)');
+    ui.close.addEventListener('click', closeCubeView);
+    head.appendChild(ui.close);
     body.appendChild(head);
 
     ui.stage = document.createElement('div'); ui.stage.className = 'vcStage';
@@ -310,14 +317,6 @@
     /* Bound ONCE, here, for the life of the canvas — never per open. See bindOrbit(). */
     bindOrbit(ui.canvas, function () { return eng; });
     ui.stage.appendChild(ui.canvas);
-
-    /* Back view: three faces are always hidden behind the cube. This is a second canvas
-     * fed by the SAME engine state at yaw+180 (engine.addView), so it can never disagree
-     * with the front — and it orbits with it. */
-    ui.back = document.createElement('canvas'); ui.back.className = 'vcBack';
-    ui.back.style.display = 'none';
-    bindOrbit(ui.back, function () { return eng; });
-    ui.stage.appendChild(ui.back);
 
     ui.hint = document.createElement('div'); ui.hint.className = 'vcHint';
     ui.stage.appendChild(ui.hint);
@@ -347,16 +346,20 @@
     foot.appendChild(ui.legend);
 
     var btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;gap:8px;';
+    btns.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
 
-    /* In-place back-view toggle: mid-solve nobody is going to dig through settings. */
-    ui.backBtn = document.createElement('button');
-    ui.backBtn.className = 'btn';
-    ui.backBtn.addEventListener('click', function () {
-      setBack(!backOn());
-      syncBackBtn();
-    });
-    btns.appendChild(ui.backBtn);
+    /* The key legend is a learning aid you read once, but it cost ~90px of cube height on
+     * every session. Collapsed by default; the cube gets the space back. */
+    ui.legendBtn = document.createElement('button');
+    ui.legendBtn.className = 'btn';
+    ui.legendBtn.addEventListener('click', function () { setLegend(!legendOn()); });
+    btns.appendChild(ui.legendBtn);
+
+    /* In-place toggle: mid-solve nobody is going to dig through settings. */
+    ui.xrayBtn = document.createElement('button');
+    ui.xrayBtn.className = 'btn';
+    ui.xrayBtn.addEventListener('click', function () { setXray(!xrayOn()); });
+    btns.appendChild(ui.xrayBtn);
 
     var reset = document.createElement('button');
     reset.className = 'btn primary';
@@ -371,7 +374,8 @@
     });
     btns.appendChild(reset);
     foot.appendChild(btns);
-    syncBackBtn();
+    syncXrayBtn();
+    syncLegend();
     body.appendChild(foot);
 
     ui.bad = document.createElement('div'); ui.bad.className = 'vcBad';
@@ -390,6 +394,8 @@
      * #topbar visible in the cube view), so our copy is a duplicate eating the vertical
      * space the cube wants. The modal has no such neighbour and keeps it. */
     if (ui.scr) ui.scr.style.display = isPaneHost() ? 'none' : '';
+    /* the modal already has a ✕; only a bare pane needs ours */
+    if (ui.close) ui.close.style.display = isPaneHost() ? '' : 'none';
   }
 
   /* NB: must NOT be expressed as `host !== M.body` — App.registerModal() invokes its build
@@ -398,34 +404,49 @@
    * body element directly, set before the build runs. */
   function isPaneHost() { return !!host && host !== modalBody; }
 
-  /* ---- back view ---- */
-  var PREF_BACK = 'cstc_pack_vcube_back';
-  function backOn() {
-    try { return localStorage.getItem(PREF_BACK) === '1'; } catch (e) { return false; }
+  /* ---- see-through (xray) ----
+   * Was a second cube at yaw+180. Two cubes to track is dizzying, so the hidden faces
+   * now show THROUGH the one cube instead. The engine does the fading; we own the pref. */
+  var PREF_XRAY = 'cstc_pack_vcube_xray';
+  function xrayOn() {
+    try { return localStorage.getItem(PREF_XRAY) === '1'; } catch (e) { return false; }
   }
-  function setBack(on) {
-    try { localStorage.setItem(PREF_BACK, on ? '1' : '0'); } catch (e) { }
-    syncBackView();
+  function setXray(on) {
+    try { localStorage.setItem(PREF_XRAY, on ? '1' : '0'); } catch (e) { }
+    syncXray();
   }
-  function syncBackBtn() {
-    if (!ui.backBtn) return;
-    var on = backOn();
-    ui.backBtn.textContent = on
-      ? T('vcubeBackOff', '뒷면 숨기기', 'hide back')
-      : T('vcubeBackOn', '뒷면 보기', 'show back');
-    ui.backBtn.classList.toggle('primary', on);
+  function syncXrayBtn() {
+    if (!ui.xrayBtn) return;
+    var on = xrayOn();
+    ui.xrayBtn.textContent = on
+      ? T('vcubeXrayOff', '투명 끄기', 'solid')
+      : T('vcubeXrayOn', '투명 보기', 'see-through');
+    ui.xrayBtn.classList.toggle('primary', on);
+  }
+  function syncXray() {
+    syncXrayBtn();
+    if (eng && eng.setXray) eng.setXray(xrayOn());
   }
 
-  function syncBackView() {
-    syncBackBtn();
-    if (!ui.back || !ui.stage) return;
-    var on = backOn();
-    ui.back.style.display = on ? '' : 'none';
-    ui.stage.classList.toggle('vcTwo', on);
-    if (!eng) return;
-    if (on) eng.addView(ui.back, { dYaw: 180 });
-    else eng.removeView(ui.back);
+  /* ---- key legend ---- */
+  var PREF_LEGEND = 'cstc_pack_vcube_legend';
+  function legendOn() {
+    try { return localStorage.getItem(PREF_LEGEND) === '1'; } catch (e) { return false; }
+  }
+  function setLegend(on) {
+    try { localStorage.setItem(PREF_LEGEND, on ? '1' : '0'); } catch (e) { }
+    syncLegend();
     fitCanvas();
+  }
+  function syncLegend() {
+    var on = legendOn();
+    if (ui.legendBtn) {
+      ui.legendBtn.textContent = on
+        ? T('vcubeKeysOff', '키 숨기기', 'hide keys')
+        : T('vcubeKeysOn', '키 보기', 'keys');
+      ui.legendBtn.classList.toggle('primary', on);
+    }
+    if (ui.legend && st.n) ui.legend.style.display = on ? '' : 'none';
   }
 
   function ensureModal() {
@@ -457,23 +478,7 @@
     if (!ui.stage || !ui.canvas || !eng) return;
     var w = ui.stage.clientWidth, h = ui.stage.clientHeight;
     if (!w || !h) return;
-    var two = backOn() && ui.back;
-    var side;
-    if (two) {
-      /* Two cubes share the stage. Lay them out along the LONGER axis so a wide desktop
-       * stage puts them side by side and a tall phone stage stacks them, and never let a
-       * pair be larger than a single cube would have been. */
-      var horiz = w >= h;
-      side = horiz
-        ? Math.min(Math.floor((w - 24) / 2), h - 16)
-        : Math.min(w - 16, Math.floor((h - 24) / 2));
-      side = Math.max(110, side);
-      ui.stage.style.flexDirection = horiz ? 'row' : 'column';
-      ui.back.style.width = ui.back.style.height = side + 'px';
-    } else {
-      side = Math.max(160, Math.floor(Math.min(w, h) - 16));
-      ui.stage.style.flexDirection = '';
-    }
+    var side = Math.max(160, Math.floor(Math.min(w, h) - 16));
     ui.canvas.style.width = side + 'px';
     ui.canvas.style.height = side + 'px';
     eng.render();
@@ -675,7 +680,13 @@
     if (textFocused()) return;
     if (e.repeat) return;
 
-    if (e.code === 'Escape') { abort(true); return; } // let app.js closeModals() run
+    if (e.code === 'Escape') {
+      abort(true);
+      /* In the desktop view there is no modal for app.js's closeModals() to close, so we
+       * must close ourselves; in the modal we let closeModals() run as before. */
+      if (cubeViewOpen()) { e.preventDefault(); e.stopPropagation(); closeCubeView(); }
+      return;
+    }
 
     if (e.code === 'Space') {
       e.preventDefault(); e.stopPropagation();
@@ -741,7 +752,7 @@
     ui.bad.style.display = cube ? 'none' : '';
     ui.stage.style.display = cube ? '' : 'none';
     ui.pad.style.display = cube ? '' : 'none';
-    ui.legend.style.display = cube ? '' : 'none';
+    ui.legend.style.display = (cube && legendOn()) ? '' : 'none';
 
     if (!cube) {
       ui.bad.textContent = '';
@@ -772,14 +783,49 @@
 
     fitCanvas();
     observeStage();
-    syncBackView();
+    syncXray();
     document.addEventListener('keydown', onKey, true);
     /* Open SOLVED and wait for Space — csTimer's flow, and it makes Space mean something. */
     armSolved();
     return true;
   }
 
+  /* DESKTOP: the cube is a full VIEW, not a floating modal — you stare at this thing while
+   * solving, so it gets the whole main column (desktop.css keys off body[data-cubeview]).
+   * Mobile has the equivalent as its 큐브 tab. openPlay() routes to whichever fits.
+   *
+   * NOTE this loses the modal's free perk: app.js's uiBlocked() suppressed the core timer
+   * keys whenever a .modal.show existed. As a view there is no modal, so the core Space
+   * handler is live — hence closeCubeView()'s guard and the Space handling in onKey(),
+   * which stopPropagation()s before app.js can see it. */
+  function cubeViewOpen() { return document.body.dataset.cubeview === '1'; }
+
+  function openCubeView() {
+    var pane = document.getElementById('cubePane');
+    if (!pane) { openModalPlay(); return; }   // markup missing: fall back rather than die
+    document.body.dataset.cubeview = '1';
+    mount(pane);
+  }
+  function closeCubeView() {
+    delete document.body.dataset.cubeview;
+    unmount();
+  }
+  function toggleCubeView() {
+    if (cubeViewOpen()) closeCubeView(); else openCubeView();
+  }
+
   function openPlay() {
+    if (document.body.classList.contains('solving')) {
+      App.toast && App.toast(T('vcubeBusy', '측정 중에는 열 수 없습니다.',
+        'cannot open while the timer is running.'), { type: 'error' });
+      return;
+    }
+    /* mobile is driven by its tab (js/mobile.js calls mount directly); desktop gets the view */
+    if (!isMobile()) { openCubeView(); return; }
+    openModalPlay();
+  }
+
+  function openModalPlay() {
     /* Idempotent. A second open() without a close would build a SECOND engine over the same
      * canvas and orphan the first (live rAF loop, never destroyed) and add a second keydown
      * listener, double-applying every keypress. Hard to reach through the UI — the .modal.show
@@ -832,7 +878,11 @@
     App.registerMenuButton({
       icon: '⬜',
       title: T('vcube', '가상 큐브', 'virtual cube'),
-      onClick: openPlay
+      /* toggling matters on desktop: the view has no backdrop to click away */
+      onClick: function () {
+        if (!isMobile() && cubeViewOpen()) { closeCubeView(); return; }
+        openPlay();
+      }
     });
 
     /* settings */
@@ -840,11 +890,11 @@
       var row = document.createElement('label');
       row.className = 'orow';
       var label = document.createElement('span');
-      label.textContent = T('vcubeBackOpt', '가상 큐브: 뒷면 함께 보기', 'virtual cube: show the back');
+      label.textContent = T('vcubeXrayOpt', '가상 큐브: 투명하게 (뒷면 비침)', 'virtual cube: see-through');
       var sw = document.createElement('span'); sw.className = 'tswitch';
-      var inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = backOn();
+      var inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = xrayOn();
       var i = document.createElement('i');
-      inp.addEventListener('change', function () { setBack(inp.checked); });
+      inp.addEventListener('change', function () { setXray(inp.checked); });
       sw.appendChild(inp); sw.appendChild(i);
       row.appendChild(label); row.appendChild(sw);
       page.appendChild(row);

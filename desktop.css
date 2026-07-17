@@ -83,6 +83,21 @@ body.two-tools .toolCard,
   box-shadow: var(--shadow-card);
 }
 
+/* ---------- desktop cube view ----------
+ * The cube used to live in a floating modal, which is the wrong shape for the thing
+ * you actually stare at while solving. On desktop it now takes over #main the same way
+ * the mobile 큐브 tab takes over the screen: same #cubePane, same mount(), big canvas.
+ * Toggled by body[data-cubeview="1"] (js/mobile.js owns the mobile side; the pack's
+ * menu button owns this one). */
+#cubePane { display: none; }
+body[data-cubeview="1"] #timerPad,
+body[data-cubeview="1"] #toolDock { display: none; }
+body[data-cubeview="1"] #cubePane {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+  padding: 14px; gap: 10px;
+}
+
 /* focus mode: hide chrome while solving (desktop only — mobile has its own rule) */
 body.solving.focusmode #leftbar,
 body.solving.focusmode #topbar,
