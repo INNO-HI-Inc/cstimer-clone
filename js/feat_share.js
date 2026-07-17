@@ -52,11 +52,44 @@
     }
     if ('serviceWorker' in navigator && (location.protocol === 'http:' || location.protocol === 'https:')) {
       try {
-        navigator.serviceWorker.register('./sw.js').catch(function (e) {
+        // If nothing controlled this page when it loaded, this is a first-ever
+        // install: nothing rendered is stale, so any 'updated' signal is a false
+        // alarm. sw.js posts SW_UPDATED from activate, which also fires on that
+        // first install — so the guard lives here rather than trusting the sender.
+        var wasControlled = !!navigator.serviceWorker.controller;
+        navigator.serviceWorker.register('./sw.js').then(function (reg) {
+          // A new SW caches the NEW app.js while this page keeps running the OLD one,
+          // so the user must be told. Never auto-reload — that would nuke a running timer.
+          reg.addEventListener('updatefound', function () {
+            var nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', function () {
+              // no controller = first-ever install, nothing is stale; don't nag
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) announceUpdate();
+            });
+          });
+        }).catch(function (e) {
           console.warn('[share] sw register skipped:', e && e.message);
+        });
+        // sw.js also posts SW_UPDATED on activate; either path may win, announce once
+        navigator.serviceWorker.addEventListener('message', function (e) {
+          if (e.data && e.data.type === 'SW_UPDATED' && wasControlled) announceUpdate();
         });
       } catch (e) { /* file:// or blocked — app still works */ }
     }
+  }
+
+  var updateAnnounced = false;
+  function announceUpdate() {
+    if (updateAnnounced) return;
+    updateAnnounced = true;
+    App.toast(App.i18n('swNew', '새 버전이 준비됐어요', 'new version ready'), {
+      ms: 3600000,
+      action: {
+        label: App.i18n('swReload', '새로고침', 'reload'),
+        onClick: function () { location.reload(); }
+      }
+    });
   }
 
   /* =====================================================

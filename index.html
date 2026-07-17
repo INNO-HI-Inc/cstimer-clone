@@ -2,14 +2,13 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Speedcubing timer — csTimer functional clone with Toss-style design">
 <meta name="theme-color" content="#3182f6">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>csTimer clone</title>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="fonts/pretendard.css">
 <!-- shared tokens + components, then EXACTLY ONE device layout:
      the two media queries below are complements, so desktop and mobile
      layout code never collide. js/mobile.js mirrors the mobile query. -->
@@ -49,7 +48,13 @@
     <div id="timeListWrap">
       <div id="emptyState">
         <span class="big">&#128522;</span>
-        <span data-i18n="emptyHint">no solves yet.<br>hold space, release, and go!</span>
+        <!-- the line break MUST be a literal newline, not <br>: applyI18nStatic()
+             snapshots textContent (where <br> contributes nothing) and rewrites
+             children, so any embedded markup here is destroyed on first load.
+             KO.emptyHint already carries a real \n; #emptyState's span is
+             white-space:pre-line so both languages break in the same place. -->
+        <span data-i18n="emptyHint">no solves yet.
+hold space, release, and go!</span>
       </div>
       <table id="timeList"></table>
     </div>
@@ -90,7 +95,10 @@
   <div id="mStrip" aria-hidden="true"></div>
 
   <div id="toolDock">
-    <div class="card toolCard" id="toolCard1" style="display:none;">
+    <!-- `display: none` is written with a space so this initial value serialises
+         identically to what app.js later writes via style.display — desktop.css
+         keys its two-tool dock layout off that inline value with :has(). -->
+    <div class="card toolCard" id="toolCard1" style="display: none;">
       <div class="toolHead"><select id="toolSel1" aria-label="tool 2"></select></div>
       <div class="toolBody" id="toolBody1"></div>
     </div>
@@ -403,19 +411,27 @@
 <div id="toasts" aria-live="polite"></div>
 <canvas id="fxCanvas"></canvas>
 
-<script src="js/draw_nnn.js"></script>
-<script src="js/draw_pyra.js"></script>
-<script src="js/draw_skewb.js"></script>
-<script src="js/draw_sq1.js"></script>
-<script src="js/draw_clock.js"></script>
-<script src="js/draw_mega.js"></script>
-<script src="js/scramble.js"></script>
-<script src="js/stats.js"></script>
-<script src="js/app.js"></script>
-<script src="js/mobile.js"></script>
-<script src="js/feat_stats.js"></script>
-<script src="js/feat_data.js"></script>
-<script src="js/feat_tools.js"></script>
-<script src="js/feat_share.js"></script>
+<!-- `defer` on ALL of these or none: defer preserves execution order between
+     deferred scripts, so app.js still publishes window.App before mobile.js and
+     the feat_* packs run. Dropping defer from one tag would run it BEFORE the
+     deferred ones and break that contract. -->
+<script defer src="js/draw_nnn.js"></script>
+<script defer src="js/draw_pyra.js"></script>
+<script defer src="js/draw_skewb.js"></script>
+<script defer src="js/draw_sq1.js"></script>
+<script defer src="js/draw_clock.js"></script>
+<script defer src="js/draw_mega.js"></script>
+<!-- 3D virtual cube engine: needs draw_nnn.js (facelet model) above, and is
+     consumed by js/feat_vcube.js below. -->
+<script defer src="js/vcube3d.js"></script>
+<script defer src="js/scramble.js"></script>
+<script defer src="js/stats.js"></script>
+<script defer src="js/app.js"></script>
+<script defer src="js/mobile.js"></script>
+<script defer src="js/feat_stats.js"></script>
+<script defer src="js/feat_data.js"></script>
+<script defer src="js/feat_tools.js"></script>
+<script defer src="js/feat_share.js"></script>
+<script defer src="js/feat_vcube.js"></script>
 </body>
 </html>

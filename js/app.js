@@ -74,25 +74,113 @@
   function newSession(name, event) {
     return { name: name, event: event || '333', solves: [], created: Math.floor(Date.now() / 1000) };
   }
-  function loadDB() {
-    try {
-      var raw = localStorage.getItem(STORE_KEY);
-      if (raw) {
-        DB = JSON.parse(raw);
-        DB.options = Object.assign({}, DEFAULT_OPTIONS, DB.options || {});
-        if (!DB.order || !DB.order.length) throw new Error('empty');
-        return;
-      }
-    } catch (e) { }
-    DB = { app: 'cstimer-clone', version: 2, sessions: { '1': newSession('Session 1') }, order: ['1'], current: '1', options: Object.assign({}, DEFAULT_OPTIONS) };
+  function freshDB() {
+    return { app: 'cstimer-clone', version: 2, sessions: { '1': newSession('Session 1') }, order: ['1'], current: '1', options: Object.assign({}, DEFAULT_OPTIONS) };
   }
+
+  /* Every path that puts a foreign blob into DB (loadDB, importData) MUST go through this.
+   * A single missing session/solves array here bricks the app permanently: initAfterData()
+   * throws, the debounced save persists the corrupt blob anyway, and every reload re-throws
+   * before emit('ready') so all feature packs die too.
+   * Returns a structurally valid DB, or null if nothing salvageable is in `raw`. */
+  function normalizeDB(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    var src = (raw.sessions && typeof raw.sessions === 'object') ? raw.sessions : null;
+    if (!src) return null;
+    var sessions = {};
+    Object.keys(src).forEach(function (id) {
+      var s = src[id];
+      if (!s || typeof s !== 'object') return;
+      var ev = Scrambler.byId(s.event);
+      var out = {
+        name: String(s.name == null ? id : s.name),
+        event: (ev && ev.id) || '333',
+        solves: Array.isArray(s.solves) ? s.solves.filter(sanitizeSolve) : [],
+        created: (typeof s.created === 'number' && isFinite(s.created)) ? s.created : Math.floor(Date.now() / 1000)
+      };
+      // preserve pack-owned session extras (color, archived, …) that core does not model
+      Object.keys(s).forEach(function (k) { if (!(k in out)) out[k] = s[k]; });
+      sessions[id] = out;
+    });
+    var order = (Array.isArray(raw.order) ? raw.order : []).filter(function (id) { return !!sessions[id]; });
+    Object.keys(sessions).forEach(function (id) { if (order.indexOf(id) < 0) order.push(id); });
+    if (!order.length) return null;
+    return {
+      app: 'cstimer-clone',
+      version: raw.version || 2,
+      sessions: sessions,
+      order: order,
+      current: sessions[raw.current] ? raw.current : order[0],
+      options: Object.assign({}, DEFAULT_OPTIONS, (raw.options && typeof raw.options === 'object') ? raw.options : {})
+    };
+  }
+  /* a solve is [[pen, ms(, splits)], scramble, comment, epoch]; repair in place, drop the unrepairable */
+  function sanitizeSolve(sv) {
+    if (!Array.isArray(sv) || !Array.isArray(sv[0])) return false;
+    if (typeof sv[0][1] !== 'number' || !isFinite(sv[0][1])) return false;
+    sv[0][0] = (typeof sv[0][0] === 'number' && isFinite(sv[0][0])) ? sv[0][0] : 0;
+    sv[1] = (sv[1] == null) ? '' : String(sv[1]);
+    sv[2] = (sv[2] == null) ? '' : String(sv[2]);
+    sv[3] = (typeof sv[3] === 'number' && isFinite(sv[3])) ? sv[3] : 0;
+    return true;
+  }
+
+  function loadDB() {
+    var parsed = null;
+    try { parsed = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { parsed = null; }
+    DB = normalizeDB(parsed) || freshDB();
+  }
+
   var saveTimer = null;
+  var saveBroken = false;
+  var quotaBanner = null;
+  function isQuotaError(e) {
+    return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014);
+  }
+  function cancelPendingSave() { if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; } }
+  function writeDB() { localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }
   function saveDB() {
-    if (saveTimer) clearTimeout(saveTimer);
+    cancelPendingSave();
     saveTimer = setTimeout(function () {
-      try { localStorage.setItem(STORE_KEY, JSON.stringify(DB)); }
-      catch (e) { toast(T('저장 공간이 가득 찼어요', 'storage full'), { type: 'error' }); }
+      saveTimer = null;
+      try { writeDB(); clearSaveBroken(); return; }
+      catch (e) {
+        if (!isQuotaError(e)) { toast(T('저장 실패', 'save failed'), { type: 'error' }); return; }
+        // give packs a chance to free their own keys — core must not reach into pack-private storage
+        emit('quota');
+        try { writeDB(); clearSaveBroken(); return; } catch (e2) { }
+        showSaveBroken();
+      }
     }, 120);
+  }
+  function clearSaveBroken() {
+    if (!saveBroken) return;
+    saveBroken = false;
+    if (quotaBanner) { quotaBanner.remove(); quotaBanner = null; }
+  }
+  /* Loud + recoverable: solves keep being recorded in memory but are NOT persisted, so the
+   * banner must never auto-dismiss and must offer a way out (export). */
+  function showSaveBroken() {
+    saveBroken = true;
+    if (quotaBanner) return;
+    var b = document.createElement('div');
+    b.id = 'quotaBanner';
+    b.setAttribute('role', 'alert');
+    b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:9999;display:flex;gap:10px;' +
+      'align-items:center;justify-content:center;flex-wrap:wrap;padding:10px 14px;' +
+      'background:var(--red,#f04452);color:#fff;font-size:13px;font-weight:600;line-height:1.5;';
+    b.appendChild(document.createTextNode(T(
+      '저장 공간이 가득 차 새 기록이 저장되지 않아요. 지금 내보내기 하세요.',
+      'storage is full — new solves are NOT being saved. Export now.')));
+    var exp = document.createElement('button');
+    exp.textContent = T('지금 내보내기', 'export now');
+    exp.style.cssText = 'padding:5px 12px;border-radius:8px;border:0;cursor:pointer;font-weight:700;background:#fff;color:var(--red,#f04452);';
+    exp.addEventListener('click', function () {
+      download('cstimer-clone_rescue_' + new Date().toISOString().slice(0, 10) + '.json', exportJSON());
+    });
+    b.appendChild(exp);
+    document.body.appendChild(b);
+    quotaBanner = b;
   }
   function curSession() { return DB.sessions[DB.current]; }
   function opts() { return DB.options; }
@@ -128,11 +216,101 @@
     return kill;
   }
 
+  /* =============== screen-reader status =============== */
+  /* #timerDisplay is aria-live="off" (correct — it repaints every animation frame), which left
+   * a screen-reader user with no way to ever learn their time. This is the compensating region:
+   * it is written ONLY at state transitions, never from timerLoop(). */
+  var srEl = null;
+  function srStatus() {
+    if (srEl && srEl.isConnected) return srEl;
+    srEl = $('srStatus');
+    if (!srEl) {
+      srEl = document.createElement('div');
+      srEl.id = 'srStatus';
+      srEl.className = 'sr-only';
+      // inline so the region works regardless of whether style.css ships an .sr-only utility
+      srEl.style.cssText = 'position:absolute;width:1px;height:1px;margin:-1px;padding:0;' +
+        'overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;';
+      document.body.appendChild(srEl);
+    }
+    srEl.setAttribute('role', 'status');
+    srEl.setAttribute('aria-live', 'polite');
+    srEl.setAttribute('aria-atomic', 'true');
+    return srEl;
+  }
+  function announce(msg) {
+    var el = srStatus();
+    // re-announce an identical string (e.g. two equal times in a row)
+    if (el.textContent === msg) el.textContent = '';
+    el.textContent = msg;
+  }
+  /* solveToString gives '1.20+' / 'DNF(1.20)' — both read badly aloud */
+  function speakSolve(sv, p) {
+    var pen = sv[0][0];
+    if (pen === Stats.DNF) return T('DNF, ', 'D N F, ') + Stats.timeToString(sv[0][1], p);
+    var base = Stats.timeToString(sv[0][1], p);
+    return pen > 0 ? base + T(' 플러스 2', ' plus 2') : base;
+  }
+
   /* =============== modals =============== */
-  function showModal(id) { $(id).classList.add('show'); }
+  /* Focus management: the dialogs declare aria-modal, which tells AT the rest of the page is
+   * inert — but focus was never moved into them, so a keyboard user stayed outside the dialog
+   * and could Tab onto destructive controls (⚙ open → 4 Tabs → "clear session"). */
+  var modalStack = [];   // trigger elements, one per nested open (styledConfirm opens over others)
+  var FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  function focusablesIn(m) {
+    return Array.prototype.filter.call(m.querySelectorAll(FOCUSABLE), function (el) {
+      return !el.disabled && el.offsetParent !== null;
+    });
+  }
+  function topModal() {
+    var open = document.querySelectorAll('.modal.show');
+    return open.length ? open[open.length - 1] : null;
+  }
+  function showModal(id) {
+    var m = $(id);
+    if (!m) return;
+    var trigger = document.activeElement;
+    modalStack.push((trigger && trigger !== document.body) ? trigger : null);
+    m.classList.add('show');
+    var f = focusablesIn(m);
+    // prefer the first real control over the ✕ close button
+    var first = f.filter(function (el) { return !el.classList.contains('mclose'); })[0] || f[0];
+    if (first) { try { first.focus(); } catch (e) { } }
+  }
   function closeModals() {
-    document.querySelectorAll('.modal.show').forEach(function (m) { m.classList.remove('show'); });
+    var open = document.querySelectorAll('.modal.show');
+    var any = open.length > 0;
+    // Blur BEFORE hiding: display:none on the focused element makes the browser run its own
+    // focus fixup to <body>, and that fixup lands AFTER our restore call and undoes it.
+    var a = document.activeElement;
+    if (a && a.blur) {
+      for (var j = 0; j < open.length; j++) {
+        if (open[j].contains(a)) { a.blur(); break; }
+      }
+    }
+    open.forEach(function (m) { m.classList.remove('show'); });
     editIndex = -1;
+    if (!any) { modalStack.length = 0; return; }
+    // closeModals() closes ALL dialogs, so restore the trigger of the outermost one
+    var trigger = modalStack.length ? modalStack[0] : null;
+    modalStack.length = 0;
+    // isConnected is not enough — styledConfirm's dialog removes itself and its trigger may be
+    // inside a dialog that just closed; only restore focus to something actually visible
+    if (trigger && trigger.isConnected && trigger.offsetParent !== null) {
+      try { trigger.focus(); } catch (e) { }
+    }
+  }
+  /* Names the dialog from its own visible title. Done here rather than in index.html so the
+   * 7 dynamically-registered dialogs get the same treatment as the 8 static ones. */
+  var labelSeq = 0;
+  function labelModal(m) {
+    m.setAttribute('aria-modal', 'true');
+    if (m.getAttribute('aria-labelledby')) return;
+    var sp = m.querySelector('.mtitle > span');
+    if (!sp) return;
+    if (!sp.id) sp.id = 'mtitle_' + (++labelSeq);
+    m.setAttribute('aria-labelledby', sp.id);
   }
   function registerModal(id, title, buildFn) {
     var m = document.createElement('div');
@@ -147,6 +325,7 @@
     box.appendChild(mt); box.appendChild(body); m.appendChild(box);
     m.addEventListener('mousedown', function (e) { if (e.target === m) closeModals(); });
     document.body.appendChild(m);
+    labelModal(m);
     if (buildFn) buildFn(body);
     return { open: function () { showModal(id); }, close: closeModals, body: body, titleEl: sp };
   }
@@ -220,7 +399,7 @@
       np.appendChild(b);
       np.appendChild(document.createTextNode(nextQueued.scr.replace(/\n/g, '  ')));
     } else np.style.display = 'none';
-    renderTools();
+    invalidateTools();
     updateTitle();
   }
 
@@ -239,10 +418,17 @@
         var h = scrHistory[i];
         var row = document.createElement('div');
         row.style.cssText = 'padding:8px 4px;border-bottom:1px solid var(--line);cursor:pointer;font-size:12px;line-height:1.5;';
+        // these rows are plain divs — without this the history modal is mouse-only
+        row.setAttribute('role', 'button');
+        row.tabIndex = 0;
         var evn = document.createElement('b'); evn.textContent = '#' + (i + 1) + ' ' + h.ev + '  ';
         row.appendChild(evn);
         row.appendChild(document.createTextNode(h.scr.replace(/\n/g, ' ').slice(0, 90)));
         row.addEventListener('click', function () { scrPtr = i; renderScramble(); closeModals(); });
+        row.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' && e.code !== 'Space') return;
+          e.preventDefault(); e.stopPropagation(); this.click();
+        });
         body.appendChild(row);
       })(i);
     }
@@ -258,7 +444,7 @@
   var T_ = {
     state: 'idle', holdStart: 0, runStart: 0, inspStart: 0,
     pen: 0, lastStopAt: 0, said8: false, said12: false, raf: 0,
-    prevText: '', splits: [], titleTick: 0
+    prevText: '', splits: [], titleTick: 0, vibedReady: false
   };
   function now() { return performance.now(); }
   function fmtTimer(ms) { return Stats.timeToString(ms, opts().precision); }
@@ -270,6 +456,20 @@
   }
   function holdReady() { return now() - T_.holdStart >= opts().holdDelay; }
   function vibrate(ms) { if (opts().haptic && navigator.vibrate) navigator.vibrate(ms); }
+  /* The WCA penalty must come from the instant the solver released, not from whatever the
+   * last rAF happened to paint (frames land up to ~16ms — and up to 61ms during a big
+   * renderStats — before the release, so 15.03s could score as no penalty). */
+  function inspPenalty() {
+    var e = (now() - T_.inspStart) / 1000;
+    return e < 15 ? 0 : (e < 17 ? 2000 : Stats.DNF);
+  }
+  /* Latched so the ready pulse fires once per hold instead of once per animation frame. */
+  function readyPulse(rdy) {
+    if (!rdy) return;
+    if (T_.vibedReady) return;
+    T_.vibedReady = true;
+    vibrate(15);
+  }
 
   function timerLoop() {
     var o = opts();
@@ -290,16 +490,22 @@
       if (e >= 8 && !T_.said8) { T_.said8 = true; sayAlert(T('8초', '8 seconds')); }
       if (e >= 12 && !T_.said12) { T_.said12 = true; sayAlert(T('12초', '12 seconds')); }
       var txt2;
+      // display only — the penalty itself is computed at the start instant, see inspPenalty()
       if (e < 15) txt2 = String(Math.ceil(15 - e));
-      else if (e < 17) { txt2 = '+2'; T_.pen = 2000; }
-      else { txt2 = 'DNF'; T_.pen = Stats.DNF; }
+      else if (e < 17) txt2 = '+2';
+      else txt2 = 'DNF';
       var bar = $('inspBar');
       bar.style.display = 'block';
       bar.firstElementChild.style.width = Math.max(0, (1 - e / 15) * 100) + '%';
-      setDisplay(txt2, T_.state === 'inspectHolding' ? (holdReady() ? 'ready' : 'holding') : 'inspect');
+      if (T_.state === 'inspectHolding') {
+        var irdy = holdReady();
+        setDisplay(txt2, irdy ? 'ready' : 'holding');
+        readyPulse(irdy);
+      } else setDisplay(txt2, 'inspect');
     } else if (T_.state === 'holding') {
-      setDisplay(fmtTimer(0), holdReady() ? 'ready' : 'holding');
-      if (holdReady()) vibrate(15);
+      var rdy = holdReady();
+      setDisplay(fmtTimer(0), rdy ? 'ready' : 'holding');
+      readyPulse(rdy);
     } else return;
     T_.raf = requestAnimationFrame(timerLoop);
   }
@@ -308,10 +514,12 @@
   function startInspection() {
     T_.state = 'inspect'; T_.inspStart = now();
     T_.pen = 0; T_.said8 = false; T_.said12 = false;
+    announce(T('인스펙션 시작', 'inspection started'));
     startLoop();
   }
   function startTimer() {
     T_.state = 'running'; T_.runStart = now(); T_.splits = [];
+    announce(T('측정 시작', 'timer started'));
     $('inspBar').style.display = 'none';
     hideQuickBar();
     document.body.classList.add('solving');
@@ -322,7 +530,9 @@
     var t = Math.round(now() - T_.runStart);
     T_.splits.push(t);
     updatePhaseInfo();
-    if (T_.splits.length >= opts().phases) stopTimer(true);
+    // hand the final split's timestamp to stopTimer: re-sampling the clock after the DOM
+    // write above lands a millisecond later and appends a bogus extra phase
+    if (T_.splits.length >= opts().phases) stopTimer(true, t);
   }
   function updatePhaseInfo() {
     var el = $('phaseInfo');
@@ -333,8 +543,8 @@
         (parts.length ? '  ·  ' + parts.join('  ') : '');
     } else { el.style.display = 'none'; }
   }
-  function stopTimer(fromSplit) {
-    var ms = Math.round(now() - T_.runStart);
+  function stopTimer(fromSplit, atMs) {
+    var ms = (atMs != null) ? atMs : Math.round(now() - T_.runStart);
     T_.state = 'stopped'; T_.lastStopAt = now();
     cancelAnimationFrame(T_.raf);
     document.body.classList.remove('solving');
@@ -343,7 +553,8 @@
     var pen = T_.pen; T_.pen = 0;
     var splits = null;
     if (opts().phases > 1) {
-      if (!fromSplit || T_.splits[T_.splits.length - 1] !== ms) T_.splits.push(ms);
+      // when we came from recordSplit the final split IS ms by construction — no de-dupe needed
+      if (!fromSplit) T_.splits.push(ms);
       splits = T_.splits.slice();
     }
     addSolve(pen, ms, splits);
@@ -352,27 +563,45 @@
     var o = opts();
     if (o.targetMs > 0 && pen !== Stats.DNF) cls = (ms + (pen > 0 ? pen : 0)) <= o.targetMs ? 'underTarget' : 'overTarget';
     setDisplay(Stats.solveToString(rec, o.precision), cls);
+    announce(speakSolve(rec, o.precision) + ', ' + T('솔브 ', 'solve ') + curSession().solves.length);
     updateTitle();
   }
   function cancelTimer(silent) {
-    T_.state = 'idle'; T_.pen = 0;
+    T_.state = 'idle'; T_.pen = 0; T_.vibedReady = false;
     cancelAnimationFrame(T_.raf);
     document.body.classList.remove('solving');
     $('inspBar').style.display = 'none';
     $('phaseInfo').style.display = 'none';
     setDisplay(fmtTimer(0), '');
-    if (!silent) updateTitle();
+    if (!silent) { announce(T('타이머 취소됨', 'timer cancelled')); updateTitle(); }
   }
   function cancelRunning() { // Esc during solve: discard
     cancelTimer();
     toast(T('솔브 취소됨', 'solve discarded'));
+  }
+  /* A hold is a gesture that needs its release. If the release never arrives — the window
+   * lost focus, a modal opened over the pad, the OS stole the touch — the state machine is
+   * left in 'holding' with a stale holdStart, and holdReady() is then trivially true: the
+   * next instantaneous tap starts a solve with zero hold delay and commits a phantom time.
+   * Deliberately does NOT touch 'running': timing straight through a blur is correct. */
+  function abortHold() {
+    if (T_.state === 'holding' || T_.state === 'preInspect') {
+      var prev = T_.prevText;
+      cancelTimer(true);
+      if (prev) setDisplay(prev, '');
+    } else if (T_.state === 'inspectHolding') {
+      T_.state = 'inspect'; T_.vibedReady = false;
+    } else return;
+    padTouching = false;
   }
 
   /* keys */
   function uiBlocked() {
     if (document.querySelector('.modal.show')) return true;
     var a = document.activeElement;
-    return !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT'));
+    // NOTE: a focused <select> must NOT block the timer — picking an event/session
+    // leaves focus on the select and would otherwise kill the spacebar until a click elsewhere.
+    return !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'));
   }
   function isStartKey(e) {
     return e.code === 'Space' || (opts().enterStart && e.code === 'Enter');
@@ -384,16 +613,20 @@
     if (T_.state === 'idle' || T_.state === 'stopped') {
       if (opts().inspection) {
         T_.state = 'preInspect';
+        T_.prevText = $('timerDisplay').textContent;
+        T_.vibedReady = false;
         setDisplay($('timerDisplay').textContent, 'holding');
       } else {
         T_.state = 'holding';
         T_.prevText = $('timerDisplay').textContent;
         T_.holdStart = now();
+        T_.vibedReady = false;
         startLoop();
       }
     } else if (T_.state === 'inspect') {
       T_.state = 'inspectHolding';
       T_.holdStart = now();
+      T_.vibedReady = false;
     }
   }
   function padUp(isStart) {
@@ -407,16 +640,37 @@
         setDisplay(T_.prevText || fmtTimer(0), '');
       }
     } else if (T_.state === 'inspectHolding') {
-      if (holdReady()) startTimer();
+      // sample the penalty at the release instant, before startTimer() moves the clock on
+      if (holdReady()) { T_.pen = inspPenalty(); startTimer(); }
       else T_.state = 'inspect';
     }
   }
 
+  /* Keeps Tab inside the open dialog. Must run BEFORE the e.repeat guard below — a held Tab
+   * autorepeats and would otherwise walk straight out of the dialog. */
+  function trapTab(e) {
+    var m = topModal();
+    if (!m) return;
+    var f = focusablesIn(m);
+    if (!f.length) { e.preventDefault(); return; }
+    var first = f[0], last = f[f.length - 1];
+    var a = document.activeElement;
+    if (!m.contains(a)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); return; }
+    if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
+  }
+
   document.addEventListener('keydown', function (e) {
+    if (e.code === 'Tab' && document.querySelector('.modal.show')) { trapTab(e); return; }
     if (e.repeat) return;
     if (T_.state === 'running') {
+      if (e.code === 'Escape') { e.preventDefault(); cancelRunning(); return; }
+      // stopKeys 'any' must still mean "any key the solver actually pressed" — a bare
+      // modifier is the tail of an OS chord, not a stop. (preventDefault cannot block the
+      // chord itself; this only stops us committing a bogus time on the way out.)
+      if (/^(Shift|Control|Alt|Meta|CapsLock|NumLock|ScrollLock|Fn|OS|AltGraph|Hyper|Super)$/.test(e.key)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       e.preventDefault();
-      if (e.code === 'Escape') { cancelRunning(); return; }
       if (opts().phases > 1 && e.code === 'Space') { recordSplit(); return; }
       if (opts().stopKeys === 'space' && e.code !== 'Space' && !(opts().enterStart && e.code === 'Enter')) return;
       stopTimer();
@@ -428,7 +682,9 @@
     }
     // global shortcuts
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); undoAction(); return; }
-    if (e.key === '?' || (e.shiftKey && e.code === 'Slash')) { openHelp(); return; }
+    // opening help mid-hold would strand the gesture behind uiBlocked(); 'stopped' is included
+    // so '?' keeps working in the whole period right after a solve
+    if ((e.key === '?' || (e.shiftKey && e.code === 'Slash')) && (T_.state === 'idle' || T_.state === 'stopped')) { openHelp(); return; }
     if (opts().input !== 'keyboard') return;
     if (isStartKey(e)) { e.preventDefault(); padDown(true); return; }
     if (e.code === 'Escape') { cancelTimer(); return; }
@@ -438,10 +694,15 @@
     }
   });
   document.addEventListener('keyup', function (e) {
-    if (uiBlocked()) return;
+    // a modal that opened mid-hold (⚙ / ? / a pack) makes uiBlocked() true and swallows this
+    // release forever — the hold must be aborted rather than left armed
+    if (uiBlocked()) { abortHold(); return; }
     if (opts().input !== 'keyboard') return;
     if (isStartKey(e)) { e.preventDefault(); padUp(true); }
   });
+  // the release can be lost entirely (alt-tab, notification, page hidden) — same cure
+  window.addEventListener('blur', abortHold);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) abortHold(); });
 
   var padTouching = false;
   function bindPad() {
@@ -450,7 +711,14 @@
       if (opts().input !== 'keyboard') return;
       if (e.target.closest('#quickBar')) return;
       if (T_.state === 'running') {
-        if (opts().phases > 1) recordSplit(); else stopTimer();
+        // Only the touch that begins the contact counts. A two-thumb tap otherwise fires this
+        // handler once per finger — recording two splits, or ending a phases=2 solve outright.
+        // Testing changedTouches (not `touches.length !== 1`) is deliberate: on iOS/WebKit two
+        // simultaneous fingers can coalesce into ONE touchstart with touches.length === 2, and a
+        // bare length check would swallow that tap entirely.
+        if (e.touches.length === e.changedTouches.length) {
+          if (opts().phases > 1) recordSplit(); else stopTimer();
+        }
         e.preventDefault(); return;
       }
       padTouching = true; padDown(true); e.preventDefault();
@@ -462,14 +730,13 @@
     // a touch stolen by the system (call, gesture, notification) must not strand the timer mid-hold
     pad.addEventListener('touchcancel', function () {
       if (!padTouching) return;
+      abortHold();
       padTouching = false;
-      if (T_.state === 'holding' || T_.state === 'preInspect') cancelTimer();
-      else if (T_.state === 'inspectHolding') T_.state = 'inspect';
     });
   }
 
   /* =============== solves =============== */
-  var lastDeleted = null; // {index, solve}
+  var lastDeleted = null; // {id, index, solve} — id pins the undo to the session it came from
   var lastCleared = null; // {id, solves}
 
   function pbSnapshot(solves) {
@@ -504,6 +771,7 @@
     genScramble();
     emit('solve', solve, s.solves.length - 1);
     emit('solvesChanged');
+    return solve;
   }
 
   function updateSolve(i, mutator) {
@@ -515,26 +783,29 @@
   function deleteSolve(i) {
     var s = curSession();
     if (!s.solves[i]) return;
-    lastDeleted = { index: i, solve: s.solves[i] };
+    lastDeleted = { id: DB.current, index: i, solve: s.solves[i] };
     s.solves.splice(i, 1);
     saveDB(); renderStats(); emit('solvesChanged');
     toast(T('기록 삭제됨', 'solve deleted'), {
       action: {
         label: T('되돌리기', 'undo'), onClick: function () {
-          var s2 = curSession();
-          s2.solves.splice(Math.min(lastDeleted.index, s2.solves.length), 0, lastDeleted.solve);
-          lastDeleted = null;
-          saveDB(); renderStats(); emit('solvesChanged');
+          // the toast outlives both the session switch and a ctrl+Z that already consumed lastDeleted
+          if (!lastDeleted || lastDeleted.id !== DB.current) return;
+          restoreLastDeleted();
         }
       }
     });
   }
+  function restoreLastDeleted() {
+    var s = curSession();
+    s.solves.splice(Math.min(lastDeleted.index, s.solves.length), 0, lastDeleted.solve);
+    lastDeleted = null;
+    saveDB(); renderStats(); emit('solvesChanged');
+  }
   function undoAction() {
     var s = curSession();
-    if (lastDeleted) {
-      s.solves.splice(Math.min(lastDeleted.index, s.solves.length), 0, lastDeleted.solve);
-      lastDeleted = null;
-      saveDB(); renderStats(); emit('solvesChanged');
+    if (lastDeleted && lastDeleted.id === DB.current) {
+      restoreLastDeleted();
       toast(T('삭제 취소됨', 'delete undone'));
     } else if (lastCleared && lastCleared.id === DB.current) {
       s.solves = lastCleared.solves; lastCleared = null;
@@ -642,7 +913,9 @@
         var ba = Stats.bestAverage(solves, r.n);
         if (ba) { best = ba.value; bestEnd = ba.end; }
       }
-      html += '<tr data-avg="' + (r.n || 0) + '" data-mean="' + (r.mean ? 1 : 0) + '" data-bestend="' + bestEnd + '">' +
+      // tabindex only — role="button" here makes the cells presentational and destroys the
+      // table semantics AT relies on (verified in the CDP AX tree)
+      html += '<tr tabindex="0" data-avg="' + (r.n || 0) + '" data-mean="' + (r.mean ? 1 : 0) + '" data-bestend="' + bestEnd + '">' +
         '<td class="statlabel">' + r.label + '</td><td>' + f(cur) + '</td><td>' + f(best) + '</td></tr>';
     });
     $('curBestTable').innerHTML = html;
@@ -668,7 +941,7 @@
       if (Stats.isDNF(solves[i])) cls.push('dnf');
       if (mark && i === bestIdx) cls.push('best');
       if (mark && i === worstIdx && worstIdx !== bestIdx) cls.push('worst');
-      listHtml += '<tr data-i="' + i + '" class="' + cls.join(' ') + '"><td class="idx">' + (i + 1) + '</td>' +
+      listHtml += '<tr tabindex="0" data-i="' + i + '" class="' + cls.join(' ') + '"><td class="idx">' + (i + 1) + '</td>' +
         '<td class="t">' + Stats.solveToString(solves[i], p) + '</td>' +
         '<td>' + (ao5 == null ? '-' : Stats.timeToString(ao5, p)) + '</td>' +
         '<td>' + (ao12 == null ? '-' : Stats.timeToString(ao12, p)) + '</td></tr>';
@@ -676,7 +949,7 @@
     $('timeList').innerHTML = listHtml;
     $('emptyState').style.display = solves.length ? 'none' : 'block';
     renderSessions();
-    renderTools();
+    invalidateTools();
     syncQuickBar();
     emit('render');
   }
@@ -849,6 +1122,16 @@
     body.appendChild(add);
     showModal('sessModal');
   }
+  function bindRowKeys(root, sel) {
+    root.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.code !== 'Space') return;
+      var tr = e.target.closest && e.target.closest(sel);
+      if (!tr) return;
+      e.preventDefault();
+      e.stopPropagation();
+      tr.click();
+    });
+  }
   function mkBtn(txt, fn) {
     var b = document.createElement('button');
     b.textContent = txt;
@@ -874,6 +1157,15 @@
     $('toolSel0').value = opts().tool0;
     $('toolSel1').value = opts().tool1;
   }
+  /* renderStats() and renderScramble() both end in a tool render, and addSolve() calls both —
+   * so every solve rendered the tools twice, the first time against the pre-scramble state that
+   * was thrown away microseconds later. Coalesce to one render per frame. */
+  var toolsDirty = false;
+  function invalidateTools() {
+    if (toolsDirty) return;
+    toolsDirty = true;
+    requestAnimationFrame(function () { toolsDirty = false; renderTools(); });
+  }
   function renderTools() {
     renderToolSlot(0);
     // the mobile tools tab is a whole screen — always use the second slot there,
@@ -889,25 +1181,44 @@
     var body = $('toolBody' + slot);
     // keep static metroBox alive by moving it out before wipe
     var metro = $('metroBox');
-    if (metro && metro.parentNode === body) document.body.appendChild(metro);
+    if (metro && metro.parentNode === body) { metro.style.display = 'none'; document.body.appendChild(metro); }
     body.innerHTML = '';
     try { def.render(body, slot); } catch (e) { body.textContent = 'tool error'; console.error(e); }
   }
 
+  /* The backing store must be device pixels while the box stays CSS pixels, otherwise every
+   * puzzle diagram is drawn at 1x and stretched on Retina (feat_stats.js already does this).
+   * The draw_* modules read canvas.width/height and scale their art to it, so they need no
+   * change — only callers that hardcode CSS-pixel constants (fonts, insets) must pre-scale
+   * the context via _dpr. */
   function toolCanvasIn(body) {
     var c = document.createElement('canvas');
     var w = body.clientWidth || 292, h = body.clientHeight || 200;
-    c.width = w; c.height = h;
+    var dpr = Math.min(window.devicePixelRatio || 1, 3);
+    c.width = Math.round(w * dpr);
+    c.height = Math.round(h * dpr);
+    c.style.width = w + 'px';
+    c.style.height = h + 'px';
+    c._dpr = dpr;
     body.appendChild(c);
     return c;
   }
-  function drawMsg(canvas, msg) {
+  function scaleCtx(canvas) {
     var ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    var d = canvas._dpr || 1;
+    ctx.setTransform(d, 0, 0, d, 0, 0);
+    return ctx;
+  }
+  function cssW(canvas) { return canvas.width / (canvas._dpr || 1); }
+  function cssH(canvas) { return canvas.height / (canvas._dpr || 1); }
+  function drawMsg(canvas, msg) {
+    var ctx = scaleCtx(canvas);
+    ctx.clearRect(0, 0, cssW(canvas), cssH(canvas));
     ctx.fillStyle = getComputedStyle(document.body).color;
     ctx.font = '12px ' + getComputedStyle(document.body).fontFamily;
     ctx.textAlign = 'center';
-    ctx.fillText(msg, canvas.width / 2, canvas.height / 2);
+    ctx.fillText(msg, cssW(canvas) / 2, cssH(canvas) / 2);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   /* built-in tools */
@@ -994,19 +1305,20 @@
     }).join('\n');
   }
   function drawTrend(canvas) {
-    var ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    // all geometry below is in CSS pixels (hardcoded 9px font, 32/38/22 insets) — pre-scale
+    var ctx = scaleCtx(canvas);
+    ctx.clearRect(0, 0, cssW(canvas), cssH(canvas));
     var s = curSession();
     var pts = [];
     s.solves.forEach(function (sv, i) {
       var t = Stats.timeOf(sv);
       if (t !== Infinity) pts.push([i, t]);
     });
-    if (pts.length < 2) { drawMsg(canvas, T('기록 2개 이상 필요', 'need 2+ solves')); return; }
+    if (pts.length < 2) { ctx.setTransform(1, 0, 0, 1, 0, 0); drawMsg(canvas, T('기록 2개 이상 필요', 'need 2+ solves')); return; }
     var min = Infinity, max = -Infinity;
     pts.forEach(function (p2) { if (p2[1] < min) min = p2[1]; if (p2[1] > max) max = p2[1]; });
     if (max === min) max = min + 1;
-    var W = canvas.width - 38, H = canvas.height - 22;
+    var W = cssW(canvas) - 38, H = cssH(canvas) - 22;
     var css = getComputedStyle(document.body);
     ctx.strokeStyle = css.getPropertyValue('--line').trim() || '#ccc';
     ctx.lineWidth = 1;
@@ -1037,6 +1349,7 @@
       if (!started) { ctx.moveTo(x2, y2); started = true; } else ctx.lineTo(x2, y2);
     }
     ctx.stroke();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   /* metronome */
@@ -1234,6 +1547,9 @@
   function applyOptions() {
     var o = opts();
     document.body.dataset.theme = effectiveTheme();
+    // index.html hardcodes lang="ko" — an English UI would otherwise be read by a Korean
+    // synthesizer and Chrome would offer to translate the page (WCAG 3.1.1)
+    document.documentElement.lang = lang() === 'ko' ? 'ko' : 'en';
     document.body.dataset.accent = o.accent;
     document.body.style.setProperty('--timer-scale', o.timerScale);
     document.body.style.setProperty('--scr-scale', o.scrambleScale);
@@ -1283,11 +1599,26 @@
     var data;
     try { data = JSON.parse(text); } catch (e) { toast(T('잘못된 JSON', 'invalid JSON'), { type: 'error' }); return; }
     if (data && data.app === 'cstimer-clone' && data.sessions) {
+      var next = normalizeDB(data);
+      if (!next) { toast(T('세션을 찾지 못함', 'no sessions found'), { type: 'error' }); return; }
       styledConfirm(T('현재 데이터를 가져온 데이터로 교체할까요?', 'replace ALL current data with import?'), function () {
-        DB = data;
-        DB.options = Object.assign({}, DEFAULT_OPTIONS, DB.options || {});
+        var prev = DB;
+        // a save scheduled against the old DB would serialize the NEW one when it fires,
+        // so nothing may be pending across the swap — and nothing is persisted until the
+        // import is proven to render.
+        cancelPendingSave();
+        DB = next;
+        try {
+          initAfterData();
+        } catch (err) {
+          DB = prev;
+          cancelPendingSave();
+          try { initAfterData(); } catch (e2) { }
+          console.error('[import]', err);
+          toast(T('가져오기 실패 — 데이터를 되돌렸어요', 'import failed — rolled back'), { type: 'error' });
+          return;
+        }
         saveDB();
-        initAfterData();
         toast(T('가져오기 완료', 'import done'), { type: 'success' });
       });
       return;
@@ -1309,8 +1640,8 @@
         while (DB.sessions[id]) id += 'x';
         DB.sessions[id] = newSession(String(meta.name || ('imported ' + m[1])), evId);
         DB.sessions[id].solves = data[k].map(function (sv) {
-          return [[sv[0][0], sv[0][1]], sv[1] || '', sv[2] || '', sv[3] || 0];
-        });
+          return (Array.isArray(sv) && Array.isArray(sv[0])) ? [[sv[0][0], sv[0][1]], sv[1] || '', sv[2] || '', sv[3] || 0] : null;
+        }).filter(sanitizeSolve);
         DB.order.push(id);
         imported++;
       });
@@ -1353,8 +1684,17 @@
       download('session_' + s.name.replace(/\W+/g, '_') + '.csv', rows.join('\n'), 'text/csv');
     });
     $('btnResetAll').addEventListener('click', function () {
-      styledConfirm(T('모든 데이터를 삭제할까요? 되돌릴 수 없어요.', 'DELETE ALL DATA? cannot be undone.'), function () {
-        localStorage.removeItem(STORE_KEY);
+      styledConfirm(T('모든 데이터를 삭제할까요? 자동 백업 스냅샷과 설정까지 함께 지워지며 되돌릴 수 없어요.',
+        'DELETE ALL DATA? this also deletes the automatic backup snapshots and all settings. Cannot be undone.'), function () {
+        // let packs tear down non-localStorage state first
+        emit('resetAll');
+        cancelPendingSave();
+        // sweep every cstc_-prefixed key: leaving cstc_pack_data_bak behind means the
+        // confirm lies — feat_data renders a one-click restore for each surviving snapshot
+        for (var i = localStorage.length - 1; i >= 0; i--) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf('cstc_') === 0) localStorage.removeItem(k);
+        }
         location.reload();
       });
     });
@@ -1448,6 +1788,11 @@
     },
     download: download,
     copyText: copyText,
+    // Record a solve produced by an alternative input device (e.g. the virtual
+    // cube), taking the same path a keyboard solve does — PB detection + toast,
+    // confetti, 'pb'/'solve' events, next scramble. Returns the pushed solve.
+    // pbSnapshot is module-private, so a pack cannot reproduce this itself.
+    addSolve: addSolve,
     updateSolve: updateSolve,
     deleteSolve: deleteSolve,
     i18n: function (key, ko, en) { return T(ko, en); },
@@ -1483,8 +1828,11 @@
     loadDB();
     builtinTools();
 
+    document.querySelectorAll('.modal').forEach(labelModal);
+
     $('eventSel').addEventListener('change', function () {
       curSession().event = this.value;
+      this.blur();   // hand focus back to the page so the spacebar keeps working
       saveDB();
       scrHistory = []; scrPtr = -1; nextQueued = null;
       syncScrLenBox();
@@ -1502,7 +1850,7 @@
       nextQueued = null;
       genScramble();
     });
-    $('sessionSel').addEventListener('change', function () { switchSession(this.value); });
+    $('sessionSel').addEventListener('change', function () { this.blur(); switchSession(this.value); });
     $('btnSessAdd').addEventListener('click', addSession);
     $('btnSessMgr').addEventListener('click', openSessionManager);
     $('btnClearSession').addEventListener('click', clearSession);
@@ -1515,6 +1863,16 @@
       if (curEvent().id === 'input') { openInputScramble(); return; }
       copyText(currentScramble());
       toast(T('스크램블 복사됨', 'scramble copied'));
+    });
+    // index.html declares role="button" tabindex="0" but there was no key handler, so Space on
+    // the focused scramble fell through to the document handler and started a solve — making the
+    // scramble-input modal mouse-only. Bubble-phase stopPropagation is enough (that handler is
+    // not registered with capture).
+    $('scrambleTxt').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.code !== 'Space') return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.click();
     });
     $('btnOptions').addEventListener('click', function () { showModal('optionsModal'); });
     $('btnExport').addEventListener('click', function () { showModal('exportModal'); });
@@ -1540,6 +1898,11 @@
       var tr = e.target.closest('tr[data-i]');
       if (tr) openTimeModal(parseInt(tr.dataset.i, 10));
     });
+    // Enter/Space activation for the focusable rows. stopPropagation is load-bearing on the
+    // curBestTable rows: openAvgDetail() bails for a no-op row, no modal opens, uiBlocked()
+    // stays false and the Space would reach padDown and start a solve.
+    bindRowKeys($('timeList'), 'tr[data-i]');
+    bindRowKeys($('curBestTable'), 'tr[data-avg]');
     $('curBestTable').addEventListener('click', function (e) {
       var tr = e.target.closest('tr[data-avg]');
       if (!tr) return;
@@ -1603,7 +1966,7 @@
       }
     });
 
-    window.addEventListener('resize', function () { renderTools(); });
+    window.addEventListener('resize', function () { invalidateTools(); });
 
     bindOptions();
     bindExport();

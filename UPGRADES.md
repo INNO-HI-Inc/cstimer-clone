@@ -80,7 +80,7 @@
 67. 라이트/다크/시스템 테마
 68. 액센트 컬러 5종
 69. UI 폰트 크기 조절
-70. Pretendard + tabular-nums
+70. Pretendard + tabular-nums — `fonts/`에 자체 호스팅(CDN 의존 제거, 오프라인 렌더링)
 71. 단축키 도움말 모달(?)
 72. 빈 세션 온보딩 카드
 73. PB 컨페티(reduced-motion 존중)
@@ -105,7 +105,7 @@
 90. 타이머 스킨 옵션 UI [core]
 
 ## G. 공유·플랫폼 (91–100)
-91. PWA manifest + 오프라인 서비스워커 [share]
+91. PWA manifest + 오프라인 서비스워커 [share] — stale-while-revalidate + 원자적 precache (아래 인프라 참고)
 92. 파비콘/앱 아이콘(캔버스 생성) [share]
 93. 탭 타이틀에 이벤트명 [core]
 94. 결과 공유 카드 이미지(다운로드/복사) [share]
@@ -115,3 +115,19 @@
 98. 세션 텍스트 리포트(.txt) [share]
 99. 데이터 무결성 검사 도구 [share]
 100. 정보/체인지로그 모달 [core]
+
+## H. 인프라 (전달 파이프라인)
+
+기능이 아니라, **고친 것이 실제 사용자에게 도달하게 하는** 층입니다.
+
+| 항목 | 상태 |
+|---|---|
+| `sw.js` stale-while-revalidate | 캐시본 즉시 응답 + 항상 백그라운드 재검증. `CACHE_VERSION`을 깜빡해도 다음 로드에서 자가 복구. 되돌리지 말 것 |
+| SW 업데이트 계약 | activate에서 구 캐시를 대체한 경우에만 `{type:'SW_UPDATED', version}` postMessage → `feat_share.js`가 새로고침 토스트 (신규 설치는 알리지 않음, 자동 새로고침 금지) |
+| 원자적 precache | `CORE`는 `addAll`(전부 성공 아니면 install 실패) — 반쪽짜리 셸이 오프라인에서 부팅되던 문제 제거. `OPTIONAL`(manifest/아이콘/부팅 폰트)만 실패 허용 |
+| CI (`.github/workflows/ci.yml`) | push/PR마다 문법 검사 + 셀프테스트 8종 + precache 동기화 + 미디어 쿼리 여집합 + 절대경로 URL 금지. Pages가 main에서 바로 배포되므로 유일한 게이트 |
+| `.github/scripts/check-precache.js` | precache 목록 ↔ 실제 파일 불일치 시 CI 실패 (desktop.css/mobile.css/js/mobile.js 누락 사고 재발 방지) |
+| 폰트 자체 호스팅 | Pretendard v1.3.9 92개 서브셋 `fonts/` 벤더링 (OFL, `fonts/OFL.txt`). 렌더 블로킹 CDN·가변 태그 의존 제거 |
+| `LICENSE` | MIT 전문 추가 — README의 MIT 표기가 이제 실제로 유효 |
+
+**새 JS/CSS를 추가하면** `sw.js`의 `CORE`에 넣고 `CACHE_VERSION`을 올리세요. 잊으면 CI가 잡습니다.

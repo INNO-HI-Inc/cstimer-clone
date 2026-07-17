@@ -14,6 +14,14 @@
     if (!Stats || !Scrambler || !App.db()) return;
     var t = App.i18n;
 
+    // the user's configured scramble length for an event, same rule the timer uses.
+    // Prefers the core helper if it is ever exported; the fallback mirrors app.js's
+    // scrLenFor exactly. Single source of truth for every ev.gen() in this pack.
+    function scrLenFor(ev) {
+      if (typeof App.scrLenFor === 'function') return App.scrLenFor(ev);
+      return App.options().scrLens[ev.id] || ev.defLen || undefined;
+    }
+
     /* ---------- pack CSS (Toss tokens only) ---------- */
     App.addCSS([
       '.ftlWrap{display:flex;flex-direction:column;gap:8px;padding:6px 4px;font-size:12.5px;color:var(--fg);}',
@@ -278,7 +286,7 @@
         row.appendChild(btn(t('rlGen', '생성', 'generate'), 'primary', function () {
           RL.items = relaySet().evs.map(function (id) {
             var ev = Scrambler.byId(id);
-            return { label: ev.name, scr: ev.gen(), done: false };
+            return { label: ev.name, scr: ev.gen(scrLenFor(ev)), done: false };
           });
           refreshTool('relay');
         }));
@@ -415,7 +423,7 @@
             return;
           }
           BK.count = Math.max(1, Math.min(100, parseInt(inp.value, 10) || 1));
-          var len = App.options().scrLens[ev.id] || ev.defLen || undefined;
+          var len = scrLenFor(ev);
           BK.list = [];
           for (var i = 0; i < BK.count; i++) BK.list.push(ev.gen(len));
           BK.evId = ev.id;

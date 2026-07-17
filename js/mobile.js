@@ -136,12 +136,13 @@
     App.closeModals();
   }
   function bindLongPress() {
-    var timer = null, startY = 0, row = null;
+    var timer = null, startY = 0, row = null, fired = false;
     var list = $('timeList');
     if (!list) return;
     list.addEventListener('touchstart', function (e) {
       row = e.target.closest('tr[data-i]');
       if (!row) return;
+      fired = false;
       startY = e.touches[0].clientY;
       row.classList.add('mpress');
       timer = setTimeout(function () {
@@ -156,6 +157,9 @@
         var scrEl = $('mQaScr');
         if (scrEl) scrEl.textContent = solve[1] || '';
         buzz(18);
+        // the sheet is now under the finger; the touchend that follows must not
+        // be replayed as a compat mouse event onto whatever button landed there
+        fired = true;
         qaModal.open();
       }, 450);
     }, { passive: true });
@@ -166,8 +170,13 @@
     list.addEventListener('touchmove', function (e) {
       if (timer && Math.abs(e.touches[0].clientY - startY) > 10) abort(); // it's a scroll, not a press
     }, { passive: true });
-    list.addEventListener('touchend', abort, { passive: true });
-    list.addEventListener('touchcancel', abort, { passive: true });
+    // non-passive: preventDefault() here suppresses the synthetic mousedown/mouseup/click
+    // that would otherwise re-hit-test at the release point onto the freshly-opened sheet
+    list.addEventListener('touchend', function (e) {
+      if (fired) { e.preventDefault(); fired = false; }
+      abort();
+    }, { passive: false });
+    list.addEventListener('touchcancel', function () { fired = false; abort(); }, { passive: true });
   }
 
   /* ---------------- keep the screen awake during a session ---------------- */

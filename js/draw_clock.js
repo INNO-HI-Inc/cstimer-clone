@@ -156,15 +156,24 @@
     return Math.floor(Math.random() * n);
   }
 
+  /**
+   * One random dial turn, uniform over all 12 residues mod 12 (as TNoodle).
+   * v ranges over -5..+6, printed as 0+..6+ and 1-..5-; since a turn of v
+   * hours is the residue v mod 12 and v runs over 12 consecutive integers,
+   * every dial value is hit with probability exactly 1/12.
+   * (The old `randInt(6)` + random sign produced only 11 residues: 6 was
+   * unreachable and 0 came up twice as often, since +0 and -0 both mean 0.)
+   */
   function randMove(name) {
-    return name + randInt(6) + (randInt(2) === 0 ? '+' : '-');
+    var v = randInt(12) - 5;
+    return name + Math.abs(v) + (v < 0 ? '-' : '+');
   }
 
   /**
    * WCA-format clock scramble:
-   *   UR DR DL UL U R D L ALL  (amount 0..5, random sign)
+   *   UR DR DL UL U R D L ALL  (amount -5..+6, i.e. 0+..6+ and 1-..5-)
    *   y2
-   *   U R D L ALL              (amount 0..5, random sign)
+   *   U R D L ALL              (amount -5..+6)
    *   + uniformly random subset of {UR,DR,DL,UL} = pins left up.
    */
   function genScramble() {
@@ -432,9 +441,9 @@
 
       // 5. genScramble format + parse + dial range + corner invariant
       var re = new RegExp(
-        '^UR[0-5][+-] DR[0-5][+-] DL[0-5][+-] UL[0-5][+-] ' +
-        'U[0-5][+-] R[0-5][+-] D[0-5][+-] L[0-5][+-] ALL[0-5][+-] y2 ' +
-        'U[0-5][+-] R[0-5][+-] D[0-5][+-] L[0-5][+-] ALL[0-5][+-]' +
+        '^UR[0-6][+-] DR[0-6][+-] DL[0-6][+-] UL[0-6][+-] ' +
+        'U[0-6][+-] R[0-6][+-] D[0-6][+-] L[0-6][+-] ALL[0-6][+-] y2 ' +
+        'U[0-6][+-] R[0-6][+-] D[0-6][+-] L[0-6][+-] ALL[0-6][+-]' +
         '( UR)?( DR)?( DL)?( UL)?$');
       ok = true; bad = '';
       for (i = 0; i < 50; i++) {
@@ -457,6 +466,40 @@
         if (!ok) break;
       }
       check('T5 genScramble format/parse/range/invariant (50x)', ok, bad);
+
+      // 5c. REGRESSION (rank 7): every one of the 12 dial residues must be
+      // reachable, and they must be ~uniform. The old generator emitted
+      // amounts 0..5 with a random sign => residue 6 never occurred (11/12
+      // residues, i.e. only (11/12)^14 = 29.6% of clock states reachable) and
+      // residue 0 occurred twice as often ("0+" and "0-" are the same turn).
+      (function () {
+        var counts = new Array(12), k;
+        for (k = 0; k < 12; k++) counts[k] = 0;
+        var total = 0, mv = /^(?:ALL|UR|DR|DL|UL|U|R|D|L)(\d+)([+-])$/;
+        for (k = 0; k < 4000; k++) {
+          var toks = genScramble().split(' ');
+          for (var q = 0; q < toks.length; q++) {
+            var mm = mv.exec(toks[q]);
+            if (!mm) continue;
+            var amt = parseInt(mm[1], 10) * (mm[2] === '-' ? -1 : 1);
+            counts[((amt % 12) + 12) % 12]++;
+            total++;
+          }
+        }
+        var missing = [], skew = [];
+        var expect = total / 12;
+        for (k = 0; k < 12; k++) {
+          if (counts[k] === 0) missing.push(k);
+          // generous band: uniform within +/-25% of expectation over ~56k moves
+          else if (counts[k] < expect * 0.75 || counts[k] > expect * 1.25) {
+            skew.push(k + '=' + counts[k] + '/' + Math.round(expect));
+          }
+        }
+        check('T5c all 12 dial residues reachable', missing.length === 0,
+              'never emitted: [' + missing.join(',') + ']');
+        check('T5c dial residues ~uniform', skew.length === 0,
+              'skewed: ' + skew.join(' '));
+      })();
 
       // 5b. trailing pin tokens set pin state
       s = applyScramble(newState(), 'UR DL');

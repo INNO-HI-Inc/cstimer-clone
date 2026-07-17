@@ -16,21 +16,47 @@
   var FACES = ['U', 'D', 'R', 'L', 'F', 'B'];
   var AXIS = { U: 0, D: 0, R: 1, L: 1, F: 2, B: 2 };
 
+  // On an even n x n cube, an (n/2)-wide turn moves exactly half the cube, so
+  // e.g. Rw2 Lw2 on 4x4 is just the rotation x2 and wastes two moves. Each such
+  // move equals its opposite-face counterpart up to a whole-cube rotation, so we
+  // keep only one representative per axis (as TNoodle does: 4x4 never emits
+  // Dw/Lw/Bw). Rejection-sampling this keeps the distribution uniform over the
+  // remaining legal moves.
+  var HALF_FACE = { U: 1, R: 1, F: 1 };
+
   function nnnScramble(n, len, faceSet) {
     var moves = [];
     var lastFace = '', last2Face = '';
     var maxWidth = Math.max(1, Math.floor(n / 2));
+
+    // A scramble only exists if the pool spans >= 2 axes: with a single axis
+    // (e.g. ['R','L']) the same-face rule and the sandwich rule between them
+    // leave an empty accept set after the 2nd move, and the loop below could
+    // never terminate. Brute-forced over all 63 face subsets: axes >= 2 <=> it
+    // terminates. Fail loudly instead of hanging the tab.
+    var pool = faceSet || FACES;
+    var axes = {}, ai;
+    for (ai = 0; ai < pool.length; ai++) axes[AXIS[pool[ai]]] = true;
+    if (Object.keys(axes).length < 2) {
+      throw new Error('nnnScramble: faceSet spans a single axis; no scramble exists');
+    }
+
+    // Belt-and-braces bound so any future rule change fails loudly rather than
+    // spinning forever. Generous: normal generation rejects only a few percent.
+    var guard = 0, guardMax = Math.max(len, 1) * 1000;
     while (moves.length < len) {
+      if (++guard > guardMax) {
+        throw new Error('nnnScramble: no legal move after ' + guard +
+                        ' attempts (n=' + n + ', faceSet=' + pool.join('') + ')');
+      }
       var f = faceSet ? pick(faceSet) : pick(FACES);
       if (f === lastFace) continue;
       // avoid e.g. R L R (same axis sandwiching)
       if (lastFace && last2Face && AXIS[f] === AXIS[lastFace] && f === last2Face) continue;
       var w = 1;
-      if (n >= 4) {
-        w = 1 + rnd(maxWidth);
-        if (w > 3) w = 3; // WCA style: at most 3-wide (6x6/7x7)
-        if (n < 6 && w > 2) w = 2;
-      }
+      if (n >= 4) w = 1 + rnd(maxWidth); // maxWidth already caps at floor(n/2)
+      // reject pure-rotation-equivalent half-cube turns on even cubes
+      if (n % 2 === 0 && w === n / 2 && !HALF_FACE[f]) continue;
       var s = pick(SUFF);
       var name = (w >= 3 ? w : '') + f + (w >= 2 ? 'w' : '') + s;
       moves.push({ f: f, str: name });
@@ -101,14 +127,20 @@
   }
 
   /* ---------- Clock (fallback if module missing) ---------- */
+  // Uniform over all 12 dial residues: v in -5..+6 printed as 0+..6+ / 1-..5-.
+  // (rnd(6) + random sign only reached 11 residues: no 6, and 0 twice as often.)
+  function clockAmount() {
+    var v = rnd(12) - 5;
+    return Math.abs(v) + (v < 0 ? '-' : '+');
+  }
   function clockScrambleFallback() {
     var parts = [];
     ['UR', 'DR', 'DL', 'UL', 'U', 'R', 'D', 'L', 'ALL'].forEach(function (m) {
-      parts.push(m + rnd(6) + (rnd(2) ? '+' : '-'));
+      parts.push(m + clockAmount());
     });
     parts.push('y2');
     ['U', 'R', 'D', 'L', 'ALL'].forEach(function (m) {
-      parts.push(m + rnd(6) + (rnd(2) ? '+' : '-'));
+      parts.push(m + clockAmount());
     });
     ['UR', 'DR', 'DL', 'UL'].forEach(function (p) { if (rnd(2)) parts.push(p); });
     return parts.join(' ');
@@ -125,11 +157,91 @@
     return out.join(' ');
   }
 
-  /* ---------- BLD orientation suffix ---------- */
-  function bldSuffix() {
-    var a = pick(['', 'Rw', 'Rw2', "Rw'"]);
-    var b = pick(['', 'Uw', 'Uw2', "Uw'"]);
-    return (a + ' ' + b).trim();
+  /* ---------- BLD orientation suffix ----------
+   * Randomizes the solver's starting orientation. Rw-family x Uw-family alone
+   * only spans x^a . y^b = 16 of the 24 orientations (the U face can never land
+   * on L or R), so an Fw-family (z) option is included: {x^a} U {z^+-1} paired
+   * with {y^b} generates all 24. Joined with filter(Boolean) so an empty pick
+   * never leaves a trailing/double space (the generate -> copyText path does
+   * not trim).
+   */
+  function bldSuffix(pre) {
+    pre = pre || '';
+    var a = pick(['', pre + 'Rw', pre + "Rw'", pre + 'Rw2', pre + 'Fw', pre + "Fw'"]);
+    var b = pick(['', pre + 'Uw', pre + "Uw'", pre + 'Uw2']);
+    return [a, b].filter(Boolean).join(' ');
+  }
+
+  /* ---------- 2x2 CLL trainer ----------
+   * A CLL case is a 2x2 state whose D layer is already solved (all four D
+   * corners permuted AND oriented), with the U corners arbitrary. Fixing DBL as
+   * the reference, that is exactly 4! * 27 = 648 states, which form the 42 CLL
+   * cases (+ solved) once you quotient out the pre/post AUF.
+   *
+   * A plain random-move scramble over <R,U,F> cannot do this: R and F both move
+   * D corners, so the D layer survives only ~0.04% of the time. Instead we ship
+   * one algorithm per case and emit  AUF . alg . AUF , which keeps D solved BY
+   * CONSTRUCTION and picks each case uniformly (what a trainer wants).
+   *
+   * The table is not hand-copied: it was derived by an exhaustive breadth-first
+   * search of the whole 3,674,160-state 2x2 group over <U,R,F> (which bottoms
+   * out at depth 11 = the known 2x2 God's number, and finds exactly 648
+   * D-solved states, independently confirming the case count). For each of the
+   * 43 AUF-classes we kept the shortest optimal representative; the solved class
+   * is omitted so we never emit a trivial scramble. Words map solved -> case, so
+   * they are already in scramble direction and need no inversion.
+   * Verified: AUF . alg . AUF over this table spans all 648 states, and every
+   * one of them has the D layer solved. Mean length ~9 moves, max 11.
+   */
+  var CLL_ALGS = [
+    "R2 U2 R' U2 R2", "F R U R' U' F'", "F R F2 R' U2 R F", "R' F' R U' R' F2 R",
+    "R' U R U F R' F'", "F R F' U' R' U' R", "F' R' U R U F R'", "F U' F' R U' R' F",
+    "R F' U' R' U' R F", "F' U F R' F R F'", "F2 R' U2 R2 F2 R' F2", "R F' U' F U2 F R2 F'",
+    "R U2 R' U2 R' F R F'", "R' F2 R U2 R U' R' F", "R' U R F' R2 F' R2 F",
+    "R U' F U' F R F2 U2 R'", "F' R U' R U' F U R2 F2", "R2 U R' U2 R U2 R' U R2",
+    "R U2 R2 U' R2 U R2 U2 R'", "R' U R' F2 R F' R' F2 R2", "R F' U' R2 U2 F' R' U R'",
+    "F2 U F' U' F2 U' R' F2 R", "F' U2 F U R2 U R U' R2", "R' F2 R' U' R F2 R' U R2",
+    "R2 F R F2 U F2 R' F' R2", "R2 F2 R U2 R' F2 R F2 R", "R2 U2 F' U' R2 U' R2 U' F'",
+    "F2 U' F U F2 U R U2 R'", "F U2 F R2 F' R2 F R2 F2", "F' U' R2 U' F2 U' F' U2 R2",
+    "R2 F R U2 F' U2 R' F' R2", "F U2 F' R U' R' F2 U2 F'", "R2 U' F' U2 F U' R2 U R'",
+    "F R' F2 R F' U2 F U F2", "F2 U F2 R' F2 R F2 U' F2", "F' U2 F' U F R' F R2 U R'",
+    "F U' R' F2 R U' F2 R U2 R'", "F2 U' R' F' R F2 U2 F' U F'", "F' U F' U2 F2 R U' R' U' F2",
+    "F' U R U2 R' U F2 R' F2 R", "R2 U2 F' R' U' F2 R F U R'", "F U' R U F' R2 F' U' R' U R2"
+  ];
+
+  var AUF = ['', 'U', 'U2', "U'"];
+
+  // Concatenate move tokens, cancelling adjacent same-face turns (the AUF joins
+  // can meet a U move at either end of an alg). Purely cosmetic: the resulting
+  // sequence is the same group element.
+  function joinCancel(tokens) {
+    var out = [];
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (!t) continue;
+      var f = t.charAt(0);
+      var amt = t.length > 1 ? (t.charAt(1) === '2' ? 2 : 3) : 1;
+      if (out.length && out[out.length - 1].f === f) {
+        var tot = (out[out.length - 1].amt + amt) % 4;
+        out.pop();
+        if (tot === 0) continue;
+        out.push({ f: f, amt: tot });
+      } else {
+        out.push({ f: f, amt: amt });
+      }
+    }
+    return out.map(function (m) {
+      return m.f + (m.amt === 2 ? '2' : (m.amt === 3 ? "'" : ''));
+    }).join(' ');
+  }
+
+  function cllScramble() {
+    var pre = AUF[rnd(4)], post = AUF[rnd(4)];
+    var toks = [];
+    if (pre) toks.push(pre);
+    toks = toks.concat(pick(CLL_ALGS).split(' '));
+    if (post) toks.push(post);
+    return joinCancel(toks);
   }
 
   /* ---------- event table ---------- */
@@ -140,7 +252,7 @@
     { id: '555wca', name: '5x5x5',           img: '555', gen: function (len) { return nnnScramble(5, len || 60); }, defLen: 60 },
     { id: '666wca', name: '6x6x6',           img: '666', gen: function (len) { return nnnScramble(6, len || 80); }, defLen: 80 },
     { id: '777wca', name: '7x7x7',           img: '777', gen: function (len) { return nnnScramble(7, len || 100); }, defLen: 100 },
-    { id: '333ni', name: '3x3x3 blindfolded', img: '333', gen: function (len) { return nnnScramble(3, len || 25) + ' ' + bldSuffix(); }, defLen: 25 },
+    { id: '333ni', name: '3x3x3 blindfolded', img: '333', gen: function (len) { return [nnnScramble(3, len || 25), bldSuffix()].filter(Boolean).join(' '); }, defLen: 25 },
     { id: '333fm', name: '3x3x3 fewest moves', img: '333', gen: function (len) { return "R' U' F " + nnnWithConstraint(3, len || 25, ['F', 'B'], ['R', 'L']) + " R' U' F"; }, defLen: 25 },
     { id: '333oh', name: '3x3x3 one-handed',  img: '333', gen: function (len) { return nnnScramble(3, len || 25); }, defLen: 25 },
     { id: 'clkwca', name: 'clock',            img: 'clk', gen: function () { var m = g.ScrImage && g.ScrImage.clk; return (m && m.genScramble) ? m.genScramble() : clockScrambleFallback(); } },
@@ -153,7 +265,8 @@
     { id: 'ru',     name: 'trainer: <R,U>',    img: '333', gen: function (len) { return nnnScramble(3, len || 20, ['R', 'U']); }, defLen: 20, trainer: true },
     { id: 'ruf',    name: 'trainer: <R,U,F>',  img: '333', gen: function (len) { return nnnScramble(3, len || 25, ['R', 'U', 'F']); }, defLen: 25, trainer: true },
     { id: 'mu',     name: 'trainer: <M,U> LSE', img: '333', gen: function (len) { return muScramble(len || 20); }, defLen: 20, trainer: true },
-    { id: 'cll222', name: 'trainer: 2x2 CLL',  img: '222', gen: function (len) { return nnnScramble(2, len || 9, ['R', 'U', 'F']); }, defLen: 9, trainer: true },
+    // no defLen: a CLL case has a fixed-length alg, so the length box is hidden
+    { id: 'cll222', name: 'trainer: 2x2 CLL',  img: '222', gen: function () { return cllScramble(); }, trainer: true },
     { id: 'input', name: 'input scramble',    img: null,  gen: function () { return ''; } }
   ];
 
@@ -207,6 +320,143 @@
     assert('mega line format', /^(R(\+\+|--) D(\+\+|--) ){5}U'?$/.test(megaScramble(1)));
     assert('pyra has tips section', /^([ULRB]'? ){8}[ULRB]'?/.test(pyraScramble(9)));
     assert('clock fallback format', /y2/.test(clockScrambleFallback()));
+
+    /* rank 7: clock fallback must reach all 12 dial residues, ~uniformly */
+    (function () {
+      var counts = [], k;
+      for (k = 0; k < 12; k++) counts[k] = 0;
+      var total = 0, mv = /^(?:ALL|UR|DR|DL|UL|U|R|D|L)(\d+)([+-])$/;
+      for (k = 0; k < 4000; k++) {
+        var toks = clockScrambleFallback().split(' ');
+        for (var q = 0; q < toks.length; q++) {
+          var mm = mv.exec(toks[q]);
+          if (!mm) continue;
+          counts[((parseInt(mm[1], 10) * (mm[2] === '-' ? -1 : 1)) % 12 + 12) % 12]++;
+          total++;
+        }
+      }
+      var missing = [], skew = [], expect = total / 12;
+      for (k = 0; k < 12; k++) {
+        if (counts[k] === 0) missing.push(k);
+        else if (counts[k] < expect * 0.75 || counts[k] > expect * 1.25) skew.push(k);
+      }
+      assert('clock fallback reaches all 12 residues [' + missing.join(',') + ']', missing.length === 0);
+      assert('clock fallback residues ~uniform', skew.length === 0);
+      assert('clock fallback amount range 0..6', /^(?:ALL|UR|DR|DL|UL|U|R|D|L)[0-6][+-]$/.test(
+        clockScrambleFallback().split(' ')[0]));
+    })();
+
+    /* rank 11: even cubes must never emit a half-cube (= rotation) wide turn on
+     * the D/L/B side, and must never contain a pure whole-cube rotation pair. */
+    (function () {
+      var nnnSim = require('./draw_nnn.js');
+      var bad4 = 0, bad6 = 0, i, j;
+      for (i = 0; i < 500; i++) {
+        if (/(^| )[DLB]w/.test(nnnScramble(4, 40))) bad4++;
+        if (/(^| )3[DLB]w/.test(nnnScramble(6, 80))) bad6++;
+      }
+      assert('4x4 never emits Dw/Lw/Bw (half-cube = rotation)', bad4 === 0);
+      assert('6x6 never emits 3Dw/3Lw/3Bw', bad6 === 0);
+      // empirical: no adjacent pair of moves equals a pure cube rotation
+      function isRotationPair(n, a, b) {
+        var st = nnnSim.apply(nnnSim.solved(n), n, a + ' ' + b);
+        var sol = nnnSim.solved(n);
+        // a pure rotation leaves every face a solid (single-color) face
+        for (var f = 0; f < 6; f++) {
+          for (var k = 1; k < st[f].length; k++) if (st[f][k] !== st[f][0]) return false;
+        }
+        return String(st) !== String(sol);
+      }
+      var rotPairs = 0, scanned = 0;
+      for (i = 0; i < 300; i++) {
+        var toks = nnnScramble(4, 40).split(' ');
+        for (j = 1; j < toks.length; j++) {
+          scanned++;
+          if (isRotationPair(4, toks[j - 1], toks[j])) rotPairs++;
+        }
+      }
+      assert('4x4 contains no whole-cube rotation pairs (0/' + scanned + ')', rotPairs === 0);
+      assert('777 still has 3w after the half-face rule', / 3[URFDLB]w/.test(' ' + nnnScramble(7, 100)));
+      assert('444 still produces wide turns', / [URF]w/.test(' ' + nnnScramble(4, 40)));
+    })();
+
+    /* rank 25: single-axis face pools must throw, not hang the tab */
+    (function () {
+      function throws(fn) { try { fn(); return false; } catch (e) { return true; } }
+      assert('nnn(3,10,["R","L"]) throws', throws(function () { return api.nnn(3, 10, ['R', 'L']); }));
+      assert('nnn(3,10,["R"]) throws', throws(function () { return api.nnn(3, 10, ['R']); }));
+      assert('nnn(3,10,["U","D"]) throws', throws(function () { return api.nnn(3, 10, ['U', 'D']); }));
+      assert('nnn(3,10,["R","U"]) still works', !throws(function () { return api.nnn(3, 10, ['R', 'U']); }));
+      assert('nnn default still works', !throws(function () { return api.nnn(3, 25); }));
+    })();
+
+    /* rank 13: BLD suffix spans all 24 orientations and never trails a space */
+    (function () {
+      var nnnSim = require('./draw_nnn.js');
+      var suff = {}, orients = {}, trailing = 0, i;
+      for (i = 0; i < 5000; i++) {
+        var b = bldSuffix();
+        suff[b] = true;
+        // orientation = which colors land on U and F centers-ish (use corners of
+        // a solved cube: the face colors after the suffix identify orientation)
+        var st = nnnSim.apply(nnnSim.solved(3), 3, b);
+        orients[st[0][4] + ',' + st[2][4]] = true; // U center color + F center color
+        var full = api.byId('333ni').gen();
+        if (/\s$/.test(full) || /\s\s/.test(full)) trailing++;
+      }
+      assert('bldSuffix distinct suffixes = 24 (got ' + Object.keys(suff).length + ')',
+        Object.keys(suff).length === 24);
+      assert('bldSuffix spans all 24 orientations (got ' + Object.keys(orients).length + ')',
+        Object.keys(orients).length === 24);
+      assert('333ni never has trailing/double space (' + trailing + ')', trailing === 0);
+    })();
+
+    /* rank 12: CLL trainer must actually produce CLL cases (D layer solved) */
+    (function () {
+      var nnnSim = require('./draw_nnn.js');
+      var gen = api.byId('cll222').gen;
+      // faces: 0 U, 1 R, 2 F, 3 D, 4 L, 5 B. n=2 -> stickers row-major, so the
+      // bottom row of each side face is indices 2,3. The whole D LAYER (not just
+      // the D face) must be identical to a solved cube: D face + bottom row of
+      // R/F/L/B, i.e. the D corners are permuted AND oriented.
+      function dLayerSolved(st) {
+        var sol = nnnSim.solved(2), f, k;
+        for (k = 0; k < 4; k++) if (st[3][k] !== sol[3][k]) return false;
+        var sides = [1, 2, 4, 5];
+        for (f = 0; f < sides.length; f++) {
+          for (k = 2; k < 4; k++) if (st[sides[f]][k] !== sol[sides[f]][k]) return false;
+        }
+        return true;
+      }
+      var notSolved = 0, states = {}, i;
+      for (i = 0; i < 2000; i++) {
+        var scr = gen();
+        var st = nnnSim.apply(nnnSim.solved(2), 2, scr);
+        if (!dLayerSolved(st)) notSolved++;
+        states[st.map(function (f2) { return f2.join(''); }).join('|')] = true;
+      }
+      assert('CLL: full D LAYER solved in 2000/2000 scrambles (' + (2000 - notSolved) + ')', notSolved === 0);
+      // and the U layer is genuinely scrambled (not a no-op trainer)
+      var uScrambled = 0;
+      for (i = 0; i < 200; i++) {
+        var stu = nnnSim.apply(nnnSim.solved(2), 2, gen());
+        if (String(stu) !== String(nnnSim.solved(2))) uScrambled++;
+      }
+      assert('CLL: U layer actually scrambled (' + uScrambled + '/200)', uScrambled === 200);
+      assert('CLL: reaches many distinct cases (' + Object.keys(states).length + ')',
+        Object.keys(states).length > 100);
+      assert('CLL: uses only R/U/F moves', /^[RUF2' ]+$/.test(gen()));
+      assert('CLL: scramble never empty', gen().length > 0);
+      assert('CLL: no defLen (length box hidden)', api.byId('cll222').defLen === undefined);
+      // a plain <R,U,F> 2x2 scramble would almost never keep D solved: prove the
+      // old behaviour really was broken so this test cannot silently pass again
+      var oldOk = 0;
+      for (i = 0; i < 2000; i++) {
+        if (dLayerSolved(nnnSim.apply(nnnSim.solved(2), 2, nnnScramble(2, 9, ['R', 'U', 'F'])))) oldOk++;
+      }
+      assert('CLL: plain RUF scramble is NOT a CLL case (' + oldOk + '/2000 by luck)', oldOk < 50);
+    })();
+
     process.exit(fails ? 1 : 0);
   }
 })(typeof window !== 'undefined' ? window : globalThis);

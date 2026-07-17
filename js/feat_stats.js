@@ -58,14 +58,25 @@
     for (i = 0; i < times.length; i++) v += (times[i] - m) * (times[i] - m);
     return Math.sqrt(v / (times.length - 1));
   }
-  function windowSigma(n) { // σ of the finite times among the last n solves
+  // σ of the aoN window, trimmed exactly like averageOf so it describes the ao
+  // value it sits beside (untrimmed σ is dominated by the very solve the average
+  // deliberately discards). Returns null whenever the matching aoN would be DNF.
+  function windowSigma(n) {
     var solves = App.solves();
     if (solves.length < n) return null;
-    var ts = [];
+    var trim = Math.ceil(n / 20);
+    var ts = [], dnf = 0;
     for (var i = solves.length - n; i < solves.length; i++) {
       var t = Stats.timeOf(solves[i]);
-      if (t !== Infinity) ts.push(t);
+      if (t === Infinity) dnf++; else ts.push(t);
     }
+    // averageOf drops `trim` from each end; more DNFs than the top trim can absorb
+    // means the average itself is DNF, so the σ beside it must be blank too
+    if (dnf > trim) return null;
+    ts.sort(function (a, b) { return a - b; });
+    // DNFs already occupy `dnf` of the top trim slots; drop the rest from the fast end
+    ts = ts.slice(trim, ts.length - (trim - dnf));
+    if (ts.length < 2) return null;
     return sdOf(ts);
   }
 

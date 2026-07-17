@@ -1,0 +1,67 @@
+name: CI
+
+# The gate that makes every other fix stick: GitHub Pages deploys straight from
+# main, so this is the only thing standing between a broken commit and users.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: syntax + module self-tests + precache
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No npm install: the project is dependency-free by design.
+      - name: Syntax check every JS file
+        run: |
+          set -e
+          fail=0
+          for f in $(find js sw.js .github/scripts -name '*.js' | sort); do
+            if node --check "$f"; then
+              echo "ok   $f"
+            else
+              echo "FAIL $f"; fail=1
+            fi
+          done
+          exit $fail
+
+      # Each of these exits 1 on failure.
+      - name: Module self-tests
+        run: |
+          set -e
+          for f in js/draw_nnn.js js/draw_pyra.js js/draw_skewb.js js/draw_sq1.js \
+                   js/draw_clock.js js/draw_mega.js js/scramble.js js/stats.js; do
+            echo "--- $f"
+            node "$f" || exit 1
+          done
+
+      - name: Service worker precache is in sync with the repo
+        run: node .github/scripts/check-precache.js
+
+      - name: Device layout media queries must stay exact complements
+        run: |
+          set -e
+          grep -q 'href="desktop.css" media="(min-width: 761px) and (min-height: 501px), (min-width: 951px)"' index.html \
+            || { echo "desktop.css media query changed — it MUST stay the exact complement of mobile.css"; exit 1; }
+          grep -q 'href="mobile.css" media="(max-width: 760px), (max-height: 500px) and (max-width: 950px)"' index.html \
+            || { echo "mobile.css media query changed — it MUST stay the exact complement of desktop.css"; exit 1; }
+          echo "ok: complementary media queries intact"
+
+      - name: No absolute-root URLs (GitHub Pages serves from a subpath)
+        run: |
+          set -e
+          if grep -nE '(src|href)="/[^/]' index.html; then
+            echo 'Absolute "/..." URL found — every URL must be RELATIVE for the Pages subpath'; exit 1
+          fi
+          echo "ok: no root-absolute URLs"

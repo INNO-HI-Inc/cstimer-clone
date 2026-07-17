@@ -29,7 +29,11 @@ body { flex-direction: row; padding: 12px; gap: 12px; }
 #scrCtl select#eventSel { max-width: 210px; }
 #scrMeta { margin-left: auto; }
 
-#timerPad { flex: 1; }
+/* The timer is the hero and was the only surface not on a card — style.css
+ * already gave it --radius-card, which was rendering on a transparent box.
+ * Mobile has had background/shadow all along; this brings desktop to parity
+ * and gives the floating dock a surface for its --shadow-float to sit on. */
+#timerPad { flex: 1; background: var(--card); box-shadow: var(--shadow-card); }
 #timerDisplay { font-size: calc(15vmin * var(--timer-scale, 1)); }
 #padHint { margin-top: 16px; }
 
@@ -56,6 +60,27 @@ body { flex-direction: row; padding: 12px; gap: 12px; }
   .toolCard { width: 268px; min-width: 268px; box-shadow: var(--shadow-card); }
   .toolBody { height: calc(180px * var(--img-scale, 1)); }
   #timerDisplay { font-size: calc(11vmin * var(--timer-scale, 1)); }
+}
+
+/* Two tool cards is 634px of dock over a ~980px pad at 1280 wide, so the dock
+ * lands squarely on the centred #quickBar — page.click('#qbP2') hit the tool
+ * <select> instead and the solve stayed un-penalised. Whenever the second card
+ * is up, at ANY width, drop the dock into flow: the same treatment the <=1150px
+ * query already uses. (One tool at 1280 does not overlap, so the breakpoint
+ * itself must NOT move — that would cost wide one-tool users the floating dock.)
+ * `body.two-tools` is the intended hook, toggled by app.js's renderTools; the
+ * :has() clause reads the inline display app.js already writes, so the fix
+ * stands on its own if that one-line change hasn't landed yet. */
+body.two-tools #toolDock,
+#toolDock:has(#toolCard1:not([style*="display: none"])) {
+  position: static;
+  overflow-x: auto; overflow-y: hidden;
+  align-items: stretch; flex: none;
+  padding-bottom: 2px;
+}
+body.two-tools .toolCard,
+#toolDock:has(#toolCard1:not([style*="display: none"])) .toolCard {
+  box-shadow: var(--shadow-card);
 }
 
 /* focus mode: hide chrome while solving (desktop only — mobile has its own rule) */

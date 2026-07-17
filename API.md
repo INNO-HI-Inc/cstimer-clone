@@ -52,8 +52,27 @@ Inject your own CSS with `App.addCSS(cssString)`.
 Buttons: use classes `btn` (secondary), `btn primary`, `btn ghost`, `btn danger`.
 Toggle switch: `<label class="tswitch"><input type="checkbox"><i></i></label>`.
 
+## Service worker (sw.js) — update contract
+`js/feat_share.js` registers `./sw.js`. The worker is **stale-while-revalidate**: it serves the
+cached copy instantly and always revalidates in the background, so a client heals itself on the
+next load even if `CACHE_VERSION` was not bumped. Never change it back to plain cache-first.
+
+- The SW posts `{type:'SW_UPDATED', version}` to every window client from its `activate` handler,
+  **only when it superseded an older cache** (a first install must not nag a new user to reload):
+  ```js
+  navigator.serviceWorker.addEventListener('message', function (e) {
+    if (e.data && e.data.type === 'SW_UPDATED') { /* show a "reload to update" toast */ }
+  });
+  ```
+- Never auto-reload on this message — it would nuke a running timer. Offer the reload.
+- `CORE` in sw.js is precached atomically (`addAll`): a missing asset fails the install instead of
+  booting a half-app offline. If you add a `js/*.js` or a stylesheet, add it to `CORE` and bump
+  `CACHE_VERSION`. `.github/scripts/check-precache.js` fails CI if you forget.
+
 ## Rules for packs
-1. Never edit core files (index.html, style.css, js/app.js, js/scramble.js, js/stats.js, js/draw_*.js).
+1. Never edit core files (index.html, style.css, desktop.css, mobile.css, js/app.js, js/mobile.js,
+   js/scramble.js, js/stats.js, js/draw_*.js). Layout lives in desktop.css/mobile.css (exact
+   complementary media queries); style.css holds shared tokens only and must stay layout-free.
 2. Never call localStorage directly for solve data — always via App.db()/App.save(). You MAY use your own `localStorage` keys prefixed `cstc_pack_` for pack-private state, and store per-session extras on session objects (prefix keys with your pack name).
 3. Wrap everything in an IIFE; fail soft: if (!window.App) return.
 4. Keep UI text via App.i18n(key, ko, en) so both languages work.

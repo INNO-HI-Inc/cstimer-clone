@@ -77,7 +77,8 @@ body[data-mview="list"] #toolDock { display: none; }
 #scrambleTxt.mono { font-size: calc(12px * var(--scr-scale, 1)); }
 
 #timerPad {
-  flex: 1; min-height: 42vh;
+  flex: 1;
+  min-height: 42vh; min-height: 42dvh; /* vh is the URL-bar-retracted viewport */
   background: var(--card);
   border-radius: 16px;
   box-shadow: var(--shadow-card);
@@ -138,7 +139,7 @@ select, input[type="text"], input[type="number"] {
   flex: 1; min-height: 54px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   background: none; border-radius: 0; padding: 6px 0;
-  color: var(--g400); font-weight: 600;
+  color: var(--sub); font-weight: 600; /* g400 was 2.01:1 on the card */
 }
 #mtabs button:hover { background: none; }
 #mtabs button:active { transform: none; background: var(--hover); }
@@ -151,7 +152,10 @@ select, input[type="text"], input[type="number"] {
 .mbox {
   width: 100%; max-width: 100vw; border-radius: 22px 22px 0 0;
   animation: sheetup .28s cubic-bezier(.3,1.2,.5,1);
-  max-height: 86vh;
+  /* body is sized in dvh; a vh cap here exceeds it while the iOS URL bar is
+   * expanded, and .modal is align-items:flex-end so the overflow spills off the
+   * TOP — taking .mtitle and its ✕ with it. Match the line-11 fallback idiom. */
+  max-height: 86vh; max-height: 86dvh;
   padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px));
 }
 .mbox::before { /* grabber */
@@ -182,5 +186,5 @@ select, input[type="text"], input[type="number"] {
   #timerPad { min-height: 0; }
   #quickBar { margin-top: 6px; }
   #quickBar button { padding: 5px 10px; min-height: 30px; }
-  .mbox { max-height: 92vh; }
+  .mbox { max-height: 92vh; max-height: 92dvh; }
 }

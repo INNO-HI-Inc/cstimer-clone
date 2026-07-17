@@ -15,6 +15,8 @@
   var LS_BAK = 'cstc_pack_data_bak';     // auto-backup snapshots: [{t, db}]
   var LS_CNT = 'cstc_pack_data_bakcnt';  // solves counted since last snapshot
   var LS_OPT = 'cstc_pack_data_opts';    // pack options: {dateHeaders}
+  var LS_CAP = 'cstc_pack_data_cap';     // measured localStorage ceiling, code units
+  var LS_PROBE = 'cstc_pack_data_probe'; // transient headroom probe (never persists)
 
   function tr(key, ko, en) { return App.i18n(key, ko, en); }
   function $id(id) { return document.getElementById(id); }
@@ -178,6 +180,37 @@
     updateStorageSoon();
   });
 
+  /* A snapshot's .db is untrusted: readBaks() only Array.isArray's the outer list,
+   * and takeSnapshot's setItem can be truncated/fail mid-quota. Validate into a
+   * fresh object BEFORE anything destructive runs; null = refuse the restore. */
+  function normalizeDB(raw) {
+    if (!raw || typeof raw !== 'object' || !raw.sessions || typeof raw.sessions !== 'object') return null;
+    var out = { sessions: {}, order: [], current: null, options: {} };
+    Object.keys(raw.sessions).forEach(function (id) {
+      var src = raw.sessions[id];
+      if (!src || typeof src !== 'object') return;
+      var s = {
+        name: String(src.name || 'session'),
+        event: validEvent(src.event),
+        solves: sanitizeSolves(src.solves),
+        created: src.created || Math.floor(Date.now() / 1000)
+      };
+      if (src.color && COLOR_CSS[src.color]) s.color = src.color;
+      if (src.memo) s.memo = String(src.memo);
+      if (src.archived) s.archived = true;
+      if (Array.isArray(src.trash)) s.trash = src.trash.slice(0, 50);
+      out.sessions[id] = s;
+    });
+    var ids = Object.keys(out.sessions);
+    if (!ids.length) return null; // a DB with no usable session is not a restore, it's a wipe
+    var order = Array.isArray(raw.order) ? raw.order.filter(function (id) { return out.sessions[id]; }) : [];
+    ids.forEach(function (id) { if (order.indexOf(id) < 0) order.push(id); });
+    out.order = order;
+    out.current = out.sessions[raw.current] ? raw.current : order[0];
+    if (raw.options && typeof raw.options === 'object') out.options = raw.options;
+    return out;
+  }
+
   function totalSolvesOf(db) {
     var n = 0;
     if (db && db.sessions) {
@@ -207,9 +240,17 @@
           tr('bakConfirm', '현재 데이터를 이 백업으로 되돌릴까요? 페이지가 새로고침됩니다.',
             'replace current data with this backup? the page will reload.'),
           function () {
+            // validate FIRST — a bad snapshot must leave the live DB untouched
+            var next = normalizeDB(b.db);
+            if (!next) {
+              App.toast(tr('bakBad', '이 백업은 손상되어 복원할 수 없어요',
+                'this backup is damaged and cannot be restored'), { type: 'error' });
+              return;
+            }
+            takeSnapshot(); // make the regretted restore undoable
             var db = App.db();
             Object.keys(db).forEach(function (k) { delete db[k]; });
-            Object.keys(b.db).forEach(function (k) { db[k] = b.db[k]; });
+            Object.keys(next).forEach(function (k) { db[k] = next[k]; });
             App.save();
             setTimeout(function () { location.reload(); }, 400); // wait out debounced save
           });
@@ -592,25 +633,79 @@
   }
 
   /* =============== 61 · storage usage =============== */
-  var sbarFill = null, sbarText = null, storageTimer = null;
-  var STORAGE_CAP = 5 * 1024 * 1024; // ~5MB typical localStorage quota
-  function fmtBytes(n) {
+  var sbarFill = null, sbarText = null, storageTimer = null, sbarWarn = null;
+
+  /* Quota accounting is in UTF-16 CODE UNITS, which is what k.length + value.length
+   * already yields — but how many bytes an engine charges per code unit differs
+   * (Chromium: budget is ~5M code units regardless of ASCII/non-ASCII; WebKit
+   * charges 2 bytes/unit, so the same 5MB budget holds only ~2.6M units). Rather
+   * than guess the engine, measure the real ceiling once by probing actual
+   * headroom, and cache it. FALLBACK_CAP only applies if probing is impossible. */
+  var FALLBACK_CAP = 5 * 1024 * 1024;
+  var capUnits = null;
+
+  function scanUsed() {
+    var used = 0;
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && k.indexOf('cstc_') === 0 && k !== LS_PROBE) {
+        used += k.length + (localStorage.getItem(k) || '').length;
+      }
+    }
+    return used;
+  }
+  // largest blob that still fits, found by binary search on a temp key; the probe is
+  // synchronous so nothing can observe the transient fill, and it is always removed.
+  function probeHeadroom() {
+    var lo = 0, hi = 8 * 1024 * 1024, mid;
+    try {
+      while (hi - lo > 4096) {
+        mid = Math.floor((lo + hi) / 2);
+        try { localStorage.setItem(LS_PROBE, new Array(mid + 1).join('a')); lo = mid; }
+        catch (e) { hi = mid; }
+        try { localStorage.removeItem(LS_PROBE); } catch (e) { }
+      }
+    } finally {
+      try { localStorage.removeItem(LS_PROBE); } catch (e) { }
+    }
+    return lo;
+  }
+  function storageCap() {
+    if (capUnits) return capUnits;
+    try {
+      var cached = parseInt(localStorage.getItem(LS_CAP) || '0', 10);
+      if (cached > 0) { capUnits = cached; return capUnits; }
+      var total = scanUsed() + probeHeadroom();
+      if (total > 0) {
+        capUnits = total;
+        try { localStorage.setItem(LS_CAP, String(total)); } catch (e) { }
+        return capUnits;
+      }
+    } catch (e) { }
+    capUnits = FALLBACK_CAP;
+    return capUnits;
+  }
+  // code units -> a size the user recognises, at this engine's real charge rate
+  function fmtUnits(n) {
     if (n < 1024) return n + ' B';
     if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
     return (n / 1048576).toFixed(2) + ' MB';
   }
+  function exportWholeDB() {
+    App.download('cstimer-clone-backup.json',
+      JSON.stringify({ app: 'cstimer-clone', sessions: App.db().sessions, order: App.db().order }, null, 1));
+  }
   function updateStorageBar() {
     if (!sbarFill) return;
-    var used = 0;
-    try {
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (k && k.indexOf('cstc_') === 0) used += k.length + (localStorage.getItem(k) || '').length;
-      }
-    } catch (e) { }
-    var pct = Math.min(100, used / STORAGE_CAP * 100);
+    var used = 0, cap = FALLBACK_CAP;
+    try { used = scanUsed(); cap = storageCap(); } catch (e) { }
+    var pct = Math.min(100, used / cap * 100);
     sbarFill.style.width = pct.toFixed(1) + '%';
-    sbarText.textContent = fmtBytes(used) + ' / 5 MB';
+    // >=80% is the cliff: go red and offer the one action that actually helps
+    var hot = pct >= 80;
+    sbarFill.style.background = hot ? 'var(--red)' : 'var(--accent)';
+    sbarText.textContent = fmtUnits(used) + ' / ' + fmtUnits(cap);
+    if (sbarWarn) sbarWarn.style.display = hot ? '' : 'none';
   }
   function updateStorageSoon() {
     if (storageTimer) clearTimeout(storageTimer);
@@ -741,6 +836,9 @@
       sbarText = el('span', 'cstcd-stext');
       sg.appendChild(bar);
       sg.appendChild(sbarText);
+      sbarWarn = btn(tr('dExpAll', '데이터 내보내기', 'export your data'), 'primary', exportWholeDB);
+      sbarWarn.style.display = 'none';
+      sg.appendChild(sbarWarn);
       srow.appendChild(sg);
       pg.appendChild(srow);
       updateStorageBar();
