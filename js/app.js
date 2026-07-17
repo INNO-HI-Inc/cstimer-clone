@@ -37,7 +37,7 @@
     'sessTitle': '세션', 'inputScrTitle': '스크램블 입력', 'inputScrHint': '한 줄에 하나씩. 순서대로 사용됩니다.',
     'addQueue': '큐에 추가', 'scrHistTitle': '스크램블 히스토리', 'helpTitle': '키보드 단축키',
     'emptyHint': '아직 기록이 없어요.\n스페이스를 눌렀다 떼면 시작!', 'tap': '탭', 'start': '시작', 'stop': '정지',
-    'mvTimer': '타이머', 'mvList': '기록', 'mvTools': '도구', 'mvMore': '설정'
+    'mvTimer': '타이머', 'mvList': '기록', 'mvCube': '큐브', 'mvTools': '도구', 'mvMore': '설정'
   };
   function lang() { return (DB && DB.options.lang) || 'en'; }
   function T(ko, en) { return lang() === 'ko' ? ko : en; }

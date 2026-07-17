@@ -62,7 +62,15 @@
   var VIEWS = ['timer', 'list', 'tools'];
   function view() { return document.body.dataset.mview || 'timer'; }
   function setView(v, haptic) {
+    // 'more' and 'cube' are actions, not panes: they open a sheet/overlay and
+    // leave the underlying view (and its tab highlight) where it was.
     if (v === 'more') { $('btnOptions').click(); return; }
+    if (v === 'cube') {
+      if (haptic) buzz(8);
+      if (window.VCubeFeat && window.VCubeFeat.open) window.VCubeFeat.open();
+      else App.toast(t('가상 큐브를 불러오지 못했어요', 'virtual cube failed to load'), { type: 'error' });
+      return;
+    }
     if (VIEWS.indexOf(v) < 0) v = 'timer';
     document.body.dataset.mview = v;
     document.querySelectorAll('#mtabs button').forEach(function (b) {
