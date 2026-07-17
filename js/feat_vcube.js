@@ -163,6 +163,14 @@
     /* two-cube (front + back) layout; gap only, sizing is done in fitCanvas() */
     '.vcLcd.vcDone{color:var(--green);}',
     '.vcClose{align-self:flex-start;margin-left:4px;}',
+    /* cube-only fullscreen: everything except the canvas and a small clock gets out */
+    '.vcFull{background:var(--bg);padding:0!important;gap:0!important;}',
+    '.vcFull .vcFoot,.vcFull .vcPad,.vcFull .vcLegend,.vcFull .vcScr,.vcFull .vcClose,',
+    '.vcFull .vcHint{display:none!important;}',
+    '.vcFull .vcHead{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:2;',
+    'margin:0;padding:0;pointer-events:none;}',
+    '.vcFull .vcLcd{font-size:34px;opacity:.85;}',
+    '.vcFull .vcStage{flex:1;border-radius:0;background:transparent;}',
     '.vcStage canvas:active{cursor:grabbing;}',
     '.vcHint{position:absolute;left:0;right:0;bottom:8px;text-align:center;color:var(--sub);',
     'font-size:12px;pointer-events:none;padding:0 10px;}',
@@ -361,6 +369,11 @@
     ui.xrayBtn.addEventListener('click', function () { setXray(!xrayOn()); });
     btns.appendChild(ui.xrayBtn);
 
+    ui.fullBtn = document.createElement('button');
+    ui.fullBtn.className = 'btn';
+    ui.fullBtn.addEventListener('click', toggleFull);
+    btns.appendChild(ui.fullBtn);
+
     var reset = document.createElement('button');
     reset.className = 'btn primary';
     reset.textContent = T('vcubeReset', '스크램블 적용', 'apply scramble');
@@ -376,6 +389,7 @@
     foot.appendChild(btns);
     syncXrayBtn();
     syncLegend();
+    syncFull();
     body.appendChild(foot);
 
     ui.bad = document.createElement('div'); ui.bad.className = 'vcBad';
@@ -425,8 +439,58 @@
   }
   function syncXray() {
     syncXrayBtn();
-    if (eng && eng.setXray) eng.setXray(xrayOn());
+    if (!eng) return;
+    if (eng.setXray) eng.setXray(xrayOn());
+    if (eng.setXrayGap) eng.setXrayGap(gapPref());
   }
+
+  /* ---- gap width (see-through) ---- */
+  var PREF_GAP = 'cstc_pack_vcube_gap';
+  function gapPref() {
+    var v;
+    try { v = parseFloat(localStorage.getItem(PREF_GAP)); } catch (e) { }
+    return (v >= 0.5 && v <= 0.99) ? v : 0.86;
+  }
+  function setGap(v) {
+    try { localStorage.setItem(PREF_GAP, String(v)); } catch (e) { }
+    if (eng && eng.setXrayGap) eng.setXrayGap(v);
+  }
+
+  /* ---- cube-only fullscreen ----
+   * "다른거 다 안보이고 큐브만": native fullscreen on the stage, so even the browser
+   * chrome goes. .vcFull strips the view down to the canvas (+ a small LCD — you still
+   * need your time). Escape is handled by the browser, so we mirror its state rather
+   * than tracking our own. */
+  function fsEl() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+  function inFull() { return !!fsEl() && host && fsEl() === host; }
+  function toggleFull() {
+    if (inFull()) {
+      (document.exitFullscreen || document.webkitExitFullscreen || function () { }).call(document);
+      return;
+    }
+    if (!host) return;
+    var req = host.requestFullscreen || host.webkitRequestFullscreen;
+    if (!req) {
+      App.toast && App.toast(T('vcubeNoFs', '이 브라우저는 전체화면을 지원하지 않아요',
+        'fullscreen is not supported here'), { type: 'error' });
+      return;
+    }
+    var r = req.call(host);
+    if (r && r.catch) r.catch(function () { });
+  }
+  function syncFull() {
+    var on = inFull();
+    if (host) host.classList.toggle('vcFull', on);
+    if (ui.fullBtn) {
+      ui.fullBtn.textContent = on
+        ? T('vcubeFsOff', '전체화면 끄기', 'exit full')
+        : T('vcubeFsOn', '전체화면', 'fullscreen');
+      ui.fullBtn.classList.toggle('primary', on);
+    }
+    fitCanvas();
+  }
+  document.addEventListener('fullscreenchange', syncFull);
+  document.addEventListener('webkitfullscreenchange', syncFull);
 
   /* ---- key legend ---- */
   var PREF_LEGEND = 'cstc_pack_vcube_legend';
@@ -886,6 +950,27 @@
     });
 
     /* settings */
+    App.registerOptionRow && App.registerOptionRow('optPgDisplay', function (page) {
+      /* gap width is pure taste, so it is a knob rather than a number I picked for you */
+      var g = document.createElement('label');
+      g.className = 'orow';
+      var gl = document.createElement('span');
+      gl.textContent = T('vcubeGapOpt', '가상 큐브: 뒷면 틈 간격', 'virtual cube: gap width');
+      var gs = document.createElement('select');
+      [['0.94', T('gapNarrow', '좁게', 'narrow')],
+       ['0.86', T('gapNormal', '보통', 'normal')],
+       ['0.78', T('gapWide', '넓게', 'wide')],
+       ['0.70', T('gapWidest', '아주 넓게', 'widest')]].forEach(function (o) {
+        var op = document.createElement('option');
+        op.value = o[0]; op.textContent = o[1];
+        gs.appendChild(op);
+      });
+      gs.value = String(gapPref());
+      gs.addEventListener('change', function () { setGap(parseFloat(gs.value)); });
+      g.appendChild(gl); g.appendChild(gs);
+      page.appendChild(g);
+    });
+
     App.registerOptionRow && App.registerOptionRow('optPgDisplay', function (page) {
       var row = document.createElement('label');
       row.className = 'orow';

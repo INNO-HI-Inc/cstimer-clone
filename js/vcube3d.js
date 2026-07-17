@@ -230,10 +230,10 @@
     var XRAY_BODY_A = 0;      // body hidden entirely — the gaps ARE the window
     var XRAY_BACK_A = 1;      // far stickers at full colour, seen through those gaps
     var XRAY_FRONT_A = 1;
-    /* With the body gone, the normal 0.80 sticker leaves a ~25% gap and the cube reads as
-     * floating confetti. Fatten the stickers so the silhouette is a cube again and the gaps
-     * become windows rather than the main event. */
-    var XRAY_STICKER = opts.xrayStickerSize || 0.94;
+    /* Gap width in see-through mode is pure taste, so it is a runtime knob (setXrayGap).
+     * Below ~0.70 the cube stops reading as a cube and becomes floating confetti; at 0.94
+     * the gaps are too mean to see much back through. 0.86 is the default middle. */
+    var xrayStk = opts.xrayStickerSize || 0.86;
 
     var cubies = buildCubies(n);
     var state = NNN.solved(n);
@@ -523,7 +523,7 @@
           var col = palette[src[fc.f][fc.r * n + fc.c]] || '#888';
           var lift = [cen[0] + nm[0] * 0.012, cen[1] + nm[1] * 0.012, cen[2] + nm[2] * 0.012];
           var stkA = xray ? (facing ? XRAY_FRONT_A : XRAY_BACK_A) : 1;
-          var stkS = xray ? XRAY_STICKER : stickerSize;
+          var stkS = xray ? xrayStk : stickerSize;
           polys.push(quad(lift, u, vv, h * stkS, shade(rgbOf(col), k), stickerRadius * h, stkA));
         }
       }
@@ -641,6 +641,9 @@
       setDuration: function (ms) { duration = Math.max(0, ms || 0); return api; },
       setXray: function (on) { xray = !!on; render(); return api; },
       getXray: function () { return xray; },
+      /* sticker size in see-through mode; smaller = wider gaps = more of the back shows */
+      setXrayGap: function (s) { xrayStk = Math.max(0.5, Math.min(0.99, +s || 0.86)); render(); return api; },
+      getXrayGap: function () { return xrayStk; },
       setPalette: function (p) { palette = p.slice(); render(); return api; },
       size: n,
       stats: function () { return lastStats; },

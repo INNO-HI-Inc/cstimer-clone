@@ -20,7 +20,7 @@
  */
 'use strict';
 
-var CACHE_VERSION = 'v1.7.0';
+var CACHE_VERSION = 'v1.8.0';
 var CACHE_NAME = 'cstc-clone-' + CACHE_VERSION;
 var CACHE_PREFIX = 'cstc-clone-';
 
