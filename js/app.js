@@ -32,15 +32,79 @@
     'oListRev': '기록 목록: 과거순', 'oConfetti': 'PB 컨페티', 'oPbSound': 'PB 사운드',
     'openExport': '내보내기 / 가져오기…', 'exportTitle': '내보내기 / 가져오기',
     'expFile': '파일로 내보내기', 'expCopy': '클립보드 복사', 'expCsv': '세션 CSV',
-    'impFile': '파일 가져오기 (클론/csTimer .json)', 'impPaste': '붙여넣은 텍스트 가져오기',
+    /* Four import paths share this page (file/paste = REPLACE, feat_data's = MERGE and CSV),
+     * and nothing said which was which — so say it. importData() confirms with "replace ALL
+     * current data", which is exactly what these two do. */
+    'impFile': '파일에서 가져오기 (.json/.csv · 전체 교체)', 'impPaste': '붙여넣은 JSON 가져오기 (전체 교체)',
     'resetAll': '전체 데이터 초기화', 'pasteJson': '내보낸 JSON을 붙여넣기',
     'sessTitle': '세션', 'inputScrTitle': '스크램블 입력', 'inputScrHint': '한 줄에 하나씩. 순서대로 사용됩니다.',
     'addQueue': '큐에 추가', 'scrHistTitle': '스크램블 히스토리', 'helpTitle': '키보드 단축키',
     'emptyHint': '아직 기록이 없어요.\n스페이스를 눌렀다 떼면 시작!', 'tap': '탭', 'start': '시작', 'stop': '정지',
-    'mvTimer': '타이머', 'mvList': '기록', 'mvCube': '큐브', 'mvTools': '도구', 'mvMore': '설정'
+    'mvTimer': '타이머', 'mvList': '기록', 'mvCube': '큐브', 'mvTools': '도구', 'mvMore': '설정',
+    /* restructure: labeled affordances replacing the old icon rows */
+    'cubeView': '큐브', 'more': '더보기', 'scShortcuts': '단축키', 'scFullscreen': '전체화면',
+    'scData': '데이터', 'sumTitle': '요약', 'histTitle': '기록', 'toolsTitle': '도구',
+    'scrMore': '스크램블', 'scrRegen': '다시 생성', 'scrCopy': '복사', 'scrNext': '다음',
+    'scrPrev': '이전', 'scrHist': '히스토리…', 'zoomImg': '크게 보기',
+    'advanced': '고급', 'statDisp': '통계 표시', 'srchOpt': '설정 검색',
+    'srchNone': '검색 결과가 없어요', 'expSection': '백업 / 내보내기', 'impSection': '가져오기',
+    'expCsvSes': '이 세션 CSV', 'expFileAll': '전체 백업 (.json)', 'dataCheck': '데이터 검사',
+    'resetBtn': '초기화'
   };
   function lang() { return (DB && DB.options.lang) || 'en'; }
   function T(ko, en) { return lang() === 'ko' ? ko : en; }
+
+  /* A string produced by T() is a DEAD END: once a pack has done
+   *   title: T('vcube', '가상 큐브', 'virtual cube')
+   * it holds a plain string, and nothing can translate it again when the language changes
+   * later. Packs set menu-button titles and tool names exactly once, at registration, so a
+   * live language switch left them frozen at the boot language — invisible while a title was
+   * only a hover tooltip, but the ⋯ popover now RENDERS titles as visible row labels.
+   *
+   * Rather than ask five packs to each grow a refresh hook, remember the pair here, keyed by
+   * BOTH of its own outputs. Any string that came out of TR() can then be handed back to
+   * retranslate() and re-resolved in the current language, whoever is holding it and however
+   * long ago they got it. App.i18n() routes through this, so every pack — including packs
+   * that do not exist yet — gets live language switching for free, with no pack edit. */
+  var I18N_PAIRS = Object.create(null);    // produced string -> {ko, en}
+  /* produced string -> SET of every i18n key it was ever registered under. A set, not a
+   * single key: feat_vcube registers the very same '가상 큐브'/'virtual cube' under BOTH
+   * 'vcube' (its menu button) and 'vcubeOptRow' (a settings label), so a last-write-wins
+   * mapping silently depended on which line the pack happened to run last. */
+  var I18N_KEYS_OF = Object.create(null);
+  function TR(ko, en, key) {
+    var pair = { ko: ko, en: en };
+    [ko, en].forEach(function (s) {
+      if (!s) return;
+      I18N_PAIRS[s] = pair;
+      if (key) (I18N_KEYS_OF[s] || (I18N_KEYS_OF[s] = Object.create(null)))[key] = true;
+    });
+    return T(ko, en);
+  }
+  function retranslate(s) {
+    var p = s && I18N_PAIRS[s];
+    return p ? T(p.ko, p.en) : s;
+  }
+  /* Pack SETTINGS rows freeze at boot for the same reason (textContent set once at
+   * registerOptionRow time), which also made the settings search inherit the leak: an English
+   * query found nothing in a row still rendering Korean. Re-resolve the text nodes in place.
+   * Only strings TR() itself minted are touched, so anything we never produced — a session
+   * name, a storage figure, a scramble, a solve time — can never be rewritten. */
+  function retranslateTree(root) {
+    if (!root) return;
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+    var n, hits = [];
+    while ((n = w.nextNode())) {
+      var s = n.nodeValue.trim();
+      if (!s) continue;
+      var p = I18N_PAIRS[s];
+      if (!p) continue;
+      var t = T(p.ko, p.en);
+      if (t !== s) hits.push([n, n.nodeValue.replace(s, t)]);
+    }
+    // mutate after the walk: editing during it can invalidate the walker
+    hits.forEach(function (h) { h[0].nodeValue = h[1]; });
+  }
   function applyI18nStatic() {
     document.querySelectorAll('[data-i18n]').forEach(function (el) {
       var k = el.dataset.i18n;
@@ -51,6 +115,15 @@
       var k = el.dataset.i18nPh;
       if (!el.dataset.origPh) el.dataset.origPh = el.placeholder;
       el.placeholder = (lang() === 'ko' && KO[k]) ? KO[k] : el.dataset.origPh;
+    });
+    /* title + aria-label, kept in lockstep. The ⋯ popover renders a menu button's
+     * `title` as its visible row label, so an un-translated title is now a visible
+     * English string in a Korean UI — every icon button needs a real translated title. */
+    document.querySelectorAll('[data-i18n-title]').forEach(function (el) {
+      var k = el.dataset.i18nTitle;
+      if (!el.dataset.origTitle) el.dataset.origTitle = el.title;
+      el.title = (lang() === 'ko' && KO[k]) ? KO[k] : el.dataset.origTitle;
+      el.setAttribute('aria-label', el.title);
     });
   }
 
@@ -66,7 +139,8 @@
     showMo3: false, showAo50: false, showAo100: false, showAo1000: false,
     bpaWpa: false, markBestWorst: true, confirmClear: true, listReverse: false,
     confetti: true, pbSound: false,
-    tool0: 'image', tool1: 'stats', metroBpm: 60, scrLens: {}
+    tool0: 'image', tool1: 'stats', metroBpm: 60, scrLens: {},
+    folds: {}   // <details data-fold> open state, keyed by data-fold
   };
   var DB = null;
   var STORE_KEY = 'cstc_data_v1';
@@ -257,10 +331,24 @@
    * inert — but focus was never moved into them, so a keyboard user stayed outside the dialog
    * and could Tab onto destructive controls (⚙ open → 4 Tabs → "clear session"). */
   var modalStack = [];   // trigger elements, one per nested open (styledConfirm opens over others)
-  var FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+  /* <summary> is focusable but matches none of the usual selectors — the 고급 folds put four
+   * of them in the settings dialog, and Tab landed on document.body (outside the aria-modal)
+   * once per cycle because trapTab could not see them. */
+  var FOCUSABLE = 'button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
+  /* Children of a CLOSED <details> still report offsetParent (Chrome renders them with
+   * content-visibility, height and all), so the offsetParent test called them visible and the
+   * computed `last` was an element Tab can never reach — meaning the wrap in trapTab never
+   * fired. A <summary> is the one thing inside a closed <details> that IS reachable. */
+  function inClosedFold(el, root) {
+    for (var d = el.parentElement; d && d !== root; d = d.parentElement) {
+      if (d.tagName === 'DETAILS' && !d.open &&
+        !(el.tagName === 'SUMMARY' && el.parentElement === d)) return true;
+    }
+    return false;
+  }
   function focusablesIn(m) {
     return Array.prototype.filter.call(m.querySelectorAll(FOCUSABLE), function (el) {
-      return !el.disabled && el.offsetParent !== null;
+      return !el.disabled && el.offsetParent !== null && !inClosedFold(el, m);
     });
   }
   function topModal() {
@@ -344,6 +432,95 @@
     m.open();
   }
 
+  /* =============== popover ===============
+   * The one mechanism behind every "⋯" in the app (header, session, scramble). Rows are
+   * built at OPEN time, never cached: that is what lets the header popover pick up a menu
+   * button a pack registered after boot (and the 8th one a future pack adds) with no
+   * coordination at all, and lets the scramble popover omit rows that would be dead.
+   * A row is {icon, label, hint, onClick, danger} | {divider:true} | {custom:Element}. */
+  var openPop = null;
+  function closePopover() {
+    if (!openPop) return;
+    var p = openPop;
+    openPop = null;
+    p.el.remove();
+    document.removeEventListener('mousedown', p.onDoc, true);
+    document.removeEventListener('keydown', p.onKey, true);
+    window.removeEventListener('resize', closePopover);
+    if (p.anchor && p.anchor.isConnected) {
+      p.anchor.setAttribute('aria-expanded', 'false');
+      if (p.refocus) { try { p.anchor.focus(); } catch (e) { } }
+    }
+  }
+  function popoverRow(r) {
+    if (r.divider) { var hr = document.createElement('div'); hr.className = 'popDiv'; return hr; }
+    if (r.custom) return r.custom;
+    var b = document.createElement('button');
+    b.className = 'popRow' + (r.danger ? ' danger' : '');
+    b.setAttribute('role', 'menuitem');
+    var i = document.createElement('span');
+    i.className = 'popIco';
+    i.setAttribute('aria-hidden', 'true');
+    // pack icons are HTML entities ('&#8599;') already living in the DOM as button content
+    i.innerHTML = r.icon || '';
+    var l = document.createElement('span');
+    l.className = 'popLbl';
+    l.textContent = r.label;
+    b.appendChild(i); b.appendChild(l);
+    if (r.hint) {
+      var h = document.createElement('span');
+      h.className = 'popHint';
+      h.textContent = r.hint;
+      b.appendChild(h);
+    }
+    b.addEventListener('click', function () { closePopover(); r.onClick(); });
+    return b;
+  }
+  function openPopover(anchor, rows) {
+    var reopen = openPop && openPop.anchor === anchor;
+    closePopover();
+    if (reopen) return;   // clicking the anchor again is a toggle
+    var el = document.createElement('div');
+    el.className = 'popover';
+    el.setAttribute('role', 'menu');
+    rows.forEach(function (r) { el.appendChild(popoverRow(r)); });
+    document.body.appendChild(el);
+
+    var a = anchor.getBoundingClientRect();
+    var w = el.offsetWidth, h = el.offsetHeight;
+    // right-align to the anchor, then clamp into the viewport (the 264px column sits at
+    // the left edge, and Korean labels are wider than the English ones)
+    var left = Math.min(Math.max(8, a.right - w), window.innerWidth - w - 8);
+    var top = a.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, a.top - h - 6);
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+
+    var p = { el: el, anchor: anchor, refocus: false };
+    p.onDoc = function (e) { if (!el.contains(e.target) && !anchor.contains(e.target)) closePopover(); };
+    p.onKey = function (e) {
+      if (e.key === 'Escape') { e.stopPropagation(); p.refocus = true; closePopover(); return; }
+      // Tab used to walk out to the controls BEHIND the open menu while it stayed open and
+      // still reported aria-expanded="true". Keep it inside, like the dialogs do.
+      var tab = e.key === 'Tab';
+      if (!tab && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      var f = Array.prototype.filter.call(el.querySelectorAll('button, input'), function (x) { return !x.disabled; });
+      if (!f.length) return;
+      e.preventDefault();
+      var i = f.indexOf(document.activeElement);
+      var back = e.key === 'ArrowUp' || (tab && e.shiftKey);
+      var n = back ? i - 1 : i + 1;
+      f[(n + f.length) % f.length].focus();
+    };
+    document.addEventListener('mousedown', p.onDoc, true);
+    document.addEventListener('keydown', p.onKey, true);
+    window.addEventListener('resize', closePopover);
+    anchor.setAttribute('aria-expanded', 'true');
+    openPop = p;
+    var first = el.querySelector('button, input');
+    if (first) { try { first.focus(); } catch (e) { } }
+  }
+
   /* =============== scramble management =============== */
   var scrHistory = [];   // [{ev, scr, t}]
   var scrPtr = -1;
@@ -382,7 +559,8 @@
       el.appendChild(document.createTextNode(line));
     });
     el.classList.toggle('mono', !!opts().monoScramble && String(s).indexOf('\n') >= 0);
-    $('btnLastScr').disabled = scrPtr <= 0;
+    // (btnLastScr is no longer a permanently-mounted control that has to be disabled —
+    //  its popover ROW is simply absent until there is history to go back to)
     // move count
     var mc = '';
     if (opts().showMoveCount && curEvent().id !== 'input') {
@@ -407,6 +585,48 @@
   function nextScramble() {
     if (scrPtr < scrHistory.length - 1) { scrPtr++; renderScramble(); emit('scramble', currentScramble()); }
     else genScramble();
+  }
+
+  /* Rows are built fresh on every open, so a row that would be dead simply does not
+   * exist. The keyboard path is taught in the hints rather than replaced.
+   * A phone has no alt key, so advertising the chord there teaches a move that cannot be
+   * made. The shortcut itself stays bound for anyone on a hardware keyboard — this hides the
+   * hint, never the feature. Rebuilt per open, so a resize needs no invalidation. */
+  function scrambleRows() {
+    var ev = curEvent();
+    var kbd = function (h) { return isMobile() ? null : h; };
+    var rows = [
+      { icon: '&#8635;', label: T('다시 생성', 'regenerate'), onClick: function () { nextQueued = null; genScramble(); } },
+      { icon: '&#10064;', label: T('복사', 'copy'), onClick: function () { copyText(currentScramble()); toast(T('스크램블 복사됨', 'scramble copied')); } },
+      { icon: '&#8594;', label: T('다음', 'next'), hint: kbd('alt+→'), onClick: nextScramble }
+    ];
+    // ABSENT, not disabled: this was the app's only dead-on-first-paint control.
+    if (scrPtr > 0) rows.push({ icon: '&#8592;', label: T('이전', 'last'), hint: kbd('alt+←'), onClick: lastScramble });
+    if (scrHistory.length) rows.push({ icon: '&#128337;', label: T('히스토리…', 'history…'), onClick: openScrHistory });
+    if (ev.defLen) {
+      rows.push({ divider: true });
+      var f = document.createElement('div');
+      f.className = 'popField';
+      var sp = document.createElement('span');
+      sp.textContent = T('길이', 'length');
+      var inp = document.createElement('input');
+      inp.type = 'number'; inp.min = '1'; inp.max = '200';
+      inp.id = 'scrLenInput';
+      inp.setAttribute('aria-label', T('스크램블 길이', 'scramble length'));
+      inp.value = scrLenFor(ev);
+      inp.addEventListener('change', function () {
+        var v = parseInt(this.value, 10);
+        if (!v || v < 1) { this.value = scrLenFor(ev); return; }
+        opts().scrLens[ev.id] = v;
+        saveDB();
+        nextQueued = null;
+        closePopover();
+        genScramble();
+      });
+      f.appendChild(sp); f.appendChild(inp);
+      rows.push({ custom: f });
+    }
+    return rows;
   }
 
   function openScrHistory() {
@@ -844,15 +1064,20 @@
   /* =============== stats render =============== */
   var editIndex = -1;
 
-  function statRowsConfig() {
+  /* Progressive disclosure: a row only exists once its window can actually be filled.
+   * A fresh session used to paint 6 dashes (ao5/ao12 current+best) plus a dead 3-column
+   * list header — an empty table teaching the user nothing except that the app has
+   * columns. `count` is the live solve count; the opt gates below are unchanged and now
+   * simply AND with the data gate. */
+  function statRowsConfig(count) {
     var o = opts();
     var rows = [{ key: 'time', label: 'time' }];
-    if (o.showMo3) rows.push({ key: 'mo3', label: 'mo3', n: 3, mean: true });
-    rows.push({ key: 'ao5', label: 'ao5', n: 5 });
-    rows.push({ key: 'ao12', label: 'ao12', n: 12 });
-    if (o.showAo50) rows.push({ key: 'ao50', label: 'ao50', n: 50 });
-    if (o.showAo100) rows.push({ key: 'ao100', label: 'ao100', n: 100 });
-    if (o.showAo1000) rows.push({ key: 'ao1000', label: 'ao1000', n: 1000 });
+    if (o.showMo3 && count >= 3) rows.push({ key: 'mo3', label: 'mo3', n: 3, mean: true });
+    if (count >= 5) rows.push({ key: 'ao5', label: 'ao5', n: 5 });
+    if (count >= 12) rows.push({ key: 'ao12', label: 'ao12', n: 12 });
+    if (o.showAo50 && count >= 50) rows.push({ key: 'ao50', label: 'ao50', n: 50 });
+    if (o.showAo100 && count >= 100) rows.push({ key: 'ao100', label: 'ao100', n: 100 });
+    if (o.showAo1000 && count >= 1000) rows.push({ key: 'ao1000', label: 'ao1000', n: 1000 });
     return rows;
   }
 
@@ -884,9 +1109,20 @@
     var p = opts().precision;
     var f = function (v) { return v == null ? '-' : Stats.timeToString(v, p); };
 
-    $('statLine').innerHTML =
-      T('솔브', 'solve') + ': <b>' + sum.valid + '/' + sum.count + '</b>&nbsp; avg: <b>' + f(sum.avg) + '</b><br>' +
-      'mean: <b>' + f(sum.mean) + '</b>' + (sum.sd != null ? '&nbsp; σ: <b>' + f(sum.sd) + '</b>' : '');
+    /* The two headline numbers ride in the card header; mean/σ stay as a meta line
+     * underneath. Nothing is lost — the old #statLine block simply stopped being a
+     * wall of four numbers with equal weight. */
+    var meta = sum.count
+      ? (sum.valid + (sum.valid === sum.count ? '' : '/' + sum.count) + T(' 솔브', ' solves') + ' · avg ' + f(sum.avg))
+      : T('기록 없음', 'no solves');
+    $('sumMeta').textContent = meta;
+    $('histCount').textContent = sum.count ? String(sum.count) : '';
+    var sl = $('statLine');
+    if (sum.count) {
+      sl.style.display = 'block';
+      sl.textContent = 'mean ' + f(sum.mean) + (sum.sd != null ? '  ·  σ ' + f(sum.sd) : '') +
+        (sum.dnf ? '  ·  DNF ' + sum.dnf : '');
+    } else sl.style.display = 'none';
 
     var bl = $('bpaLine');
     if (opts().bpaWpa) {
@@ -895,7 +1131,7 @@
       bl.textContent = bw ? ('BPA ' + f(bw.bpa) + ' · WPA ' + f(bw.wpa)) : 'BPA - · WPA -';
     } else bl.style.display = 'none';
 
-    var rows = statRowsConfig();
+    var rows = statRowsConfig(solves.length);
     var html = '<tr><th></th><th>' + T('현재', 'current') + '</th><th>' + T('베스트', 'best') + '</th></tr>';
     rows.forEach(function (r) {
       var cur = null, best = null, bestEnd = -1;
@@ -930,21 +1166,33 @@
       }
     });
     var mark = opts().markBestWorst;
-    var listHtml = '<tr><th></th><th>time</th><th>ao5</th><th>ao12</th></tr>';
+    /* Same progressive gate as the summary table, applied to COLUMNS. Until solve 5 the
+     * list is just #+time, so the only time/ao5/ao12 labels on screen are the summary's —
+     * which is what stops the two label sets colliding on an empty session. */
+    var showAo5 = solves.length >= 5, showAo12 = solves.length >= 12;
+    // an empty session gets NO header either — a column head with no column under it is
+    // just furniture, and #emptyState is already saying the only useful thing here
+    var listHtml = solves.length ? ('<tr><th></th><th>time</th>' +
+      (showAo5 ? '<th>ao5</th>' : '') + (showAo12 ? '<th>ao12</th>' : '') + '</tr>') : '';
     var order = [];
     for (var i = solves.length - 1; i >= 0; i--) order.push(i);
     if (opts().listReverse) order.reverse();
     order.forEach(function (i) {
-      var ao5 = Stats.averageOf(solves, i, 5);
-      var ao12 = Stats.averageOf(solves, i, 12);
       var cls = [];
       if (Stats.isDNF(solves[i])) cls.push('dnf');
       if (mark && i === bestIdx) cls.push('best');
       if (mark && i === worstIdx && worstIdx !== bestIdx) cls.push('worst');
       listHtml += '<tr tabindex="0" data-i="' + i + '" class="' + cls.join(' ') + '"><td class="idx">' + (i + 1) + '</td>' +
-        '<td class="t">' + Stats.solveToString(solves[i], p) + '</td>' +
-        '<td>' + (ao5 == null ? '-' : Stats.timeToString(ao5, p)) + '</td>' +
-        '<td>' + (ao12 == null ? '-' : Stats.timeToString(ao12, p)) + '</td></tr>';
+        '<td class="t">' + Stats.solveToString(solves[i], p) + '</td>';
+      if (showAo5) {
+        var ao5 = Stats.averageOf(solves, i, 5);
+        listHtml += '<td>' + (ao5 == null ? '-' : Stats.timeToString(ao5, p)) + '</td>';
+      }
+      if (showAo12) {
+        var ao12 = Stats.averageOf(solves, i, 12);
+        listHtml += '<td>' + (ao12 == null ? '-' : Stats.timeToString(ao12, p)) + '</td>';
+      }
+      listHtml += '</tr>';
     });
     $('timeList').innerHTML = listHtml;
     $('emptyState').style.display = solves.length ? 'none' : 'block';
@@ -1141,6 +1389,45 @@
 
   /* =============== tools =============== */
   var TOOLS = {};
+
+  /* 18 tools in one flat select is a wall. Grouping is done HERE, by id, so no pack has to
+   * be edited or even know about it: a pack may pass `group` to place itself explicitly,
+   * and anything unrecognised lands in 기타 automatically (the cube game pack needs zero
+   * coordination). Order of the keys below is the order the optgroups render in. */
+  var TOOL_GROUPS = ['scramble', 'stats', 'practice', 'cube', 'other'];
+  function toolGroupLabel(g) {
+    return {
+      scramble: T('스크램블', 'scramble'), stats: T('통계', 'statistics'),
+      practice: T('연습', 'practice'), cube: T('큐브', 'cube'), other: T('기타', 'other')
+    }[g] || T('기타', 'other');
+  }
+  var TOOL_GROUP_OF = {
+    image: 'scramble', bulk: 'scramble', relay: 'scramble',
+    stats: 'stats', stats2: 'stats', dist: 'stats', dist2: 'stats',
+    trend: 'stats', trend2: 'stats', daily: 'stats', pbhist: 'stats', sesscmp: 'stats',
+    metro: 'practice', lettpair: 'practice', drill: 'practice', goal: 'practice', aocalc: 'practice',
+    vcube: 'cube', cubegame: 'cube'
+  };
+  function groupOf(def) {
+    var g = def.group || TOOL_GROUP_OF[def.id] || 'other';
+    return TOOL_GROUPS.indexOf(g) >= 0 ? g : 'other';
+  }
+  /* Groups must exist in a fixed order regardless of pack LOAD order, so an optgroup is
+   * inserted at its rank rather than appended. */
+  function optgroupIn(sel, g) {
+    var og = sel.querySelector('optgroup[data-g="' + g + '"]');
+    if (og) return og;
+    og = document.createElement('optgroup');
+    og.dataset.g = g;
+    og.label = toolGroupLabel(g);
+    var rank = TOOL_GROUPS.indexOf(g);
+    var after = null;
+    Array.prototype.forEach.call(sel.querySelectorAll('optgroup[data-g]'), function (x) {
+      if (after === null && TOOL_GROUPS.indexOf(x.dataset.g) > rank) after = x;
+    });
+    sel.insertBefore(og, after);
+    return og;
+  }
   function registerTool(def) {
     TOOLS[def.id] = def;
     [0, 1].forEach(function (slot) {
@@ -1148,7 +1435,7 @@
       if (!sel.querySelector('option[value="' + def.id + '"]')) {
         var o = document.createElement('option');
         o.value = def.id; o.textContent = def.name;
-        sel.appendChild(o);
+        optgroupIn(sel, groupOf(def)).appendChild(o);
       }
     });
     syncToolSelects();
@@ -1156,6 +1443,24 @@
   function syncToolSelects() {
     $('toolSel0').value = opts().tool0;
     $('toolSel1').value = opts().tool1;
+  }
+  /* Tool names are captured once, at registerTool() time, in whatever language was current at
+   * boot — so a live language switch used to leave the whole dropdown frozen. The registry
+   * lets us re-resolve each name from the string the pack gave us, without asking any pack to
+   * re-register. Optgroup labels are recomputed the same way (they call T() at build time). */
+  function refreshToolLabels() {
+    [0, 1].forEach(function (slot) {
+      var sel = $('toolSel' + slot);
+      if (!sel) return;
+      Array.prototype.forEach.call(sel.querySelectorAll('optgroup[data-g]'), function (og) {
+        og.label = toolGroupLabel(og.dataset.g);
+      });
+      Array.prototype.forEach.call(sel.options, function (o) {
+        var def = TOOLS[o.value];
+        if (def && def.name) o.textContent = retranslate(def.name);
+      });
+    });
+    syncToolSelects();
   }
   /* renderStats() and renderScramble() both end in a tool render, and addSolve() calls both —
    * so every solve rendered the tools twice, the first time against the pre-scramble state that
@@ -1184,6 +1489,27 @@
     if (metro && metro.parentNode === body) { metro.style.display = 'none'; document.body.appendChild(metro); }
     body.innerHTML = '';
     try { def.render(body, slot); } catch (e) { body.textContent = 'tool error'; console.error(e); }
+    syncToolZoom(slot);
+  }
+  /* ⤢ appears ONLY when it can actually do something: the slot is showing the scramble
+   * image, that image rendered a canvas, and feat_tools is loaded (it owns #ftlZoomModal).
+   * Any of those false -> no button, rather than a control that does nothing. openZoom() is
+   * private to that pack; a click on its canvas is its public interaction surface, and the
+   * pack's own delegated #toolDock listener is what turns this into a zoom. */
+  function syncToolZoom(slot) {
+    var b = $('toolZoom' + slot);
+    if (!b) return;
+    var canZoom = opts()['tool' + slot] === 'image' &&
+      !!$('toolBody' + slot).querySelector('canvas') &&
+      !!$('ftlZoomModal');
+    b.hidden = !canZoom;
+    if (canZoom && !b._bound) {
+      b._bound = 1;
+      b.addEventListener('click', function () {
+        var c = $('toolBody' + slot).querySelector('canvas');
+        if (c) c.click();
+      });
+    }
   }
 
   /* The backing store must be device pixels while the box stays CSS pixels, otherwise every
@@ -1224,9 +1550,23 @@
   /* built-in tools */
   function builtinTools() {
     registerTool({
-      id: 'image', name: T('스크램블 이미지', 'scramble image'),
+      id: 'image', name: TR('스크램블 이미지', 'scramble image'),
       render: function (body) {
-        if (!opts().showImage) { body.innerHTML = '<pre>' + T('(이미지 꺼짐 — 설정에서 켜기)', '(image off — enable in settings)') + '</pre>'; return; }
+        if (!opts().showImage) {
+          // was inert <pre> text naming a destination it refused to reach. The fix for
+          // "the image is off" is to turn the image on, right here.
+          var off = document.createElement('div');
+          off.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+            'gap:10px;height:100%;color:var(--sub);font-size:12.5px;text-align:center;';
+          off.appendChild(document.createTextNode(T('스크램블 이미지가 꺼져 있어요', 'scramble image is off')));
+          var on = document.createElement('button');
+          on.className = 'primary';
+          on.textContent = T('이미지 켜기', 'turn image on');
+          on.addEventListener('click', function () { window.App.setOption('showImage', true); });
+          off.appendChild(on);
+          body.appendChild(off);
+          return;
+        }
         var c = toolCanvasIn(body);
         var ev = curEvent();
         var mod = ev.img && window.ScrImage && window.ScrImage[ev.img];
@@ -1237,7 +1577,7 @@
       }
     });
     registerTool({
-      id: 'stats', name: T('통계 요약', 'statistics'),
+      id: 'stats', name: TR('통계 요약', 'statistics'),
       render: function (body) {
         var pre = document.createElement('pre');
         pre.textContent = statsText();
@@ -1245,7 +1585,8 @@
       }
     });
     registerTool({
-      id: 'dist', name: T('분포', 'distribution'),
+      // named as a twin of feat_stats' 'dist2' (분포 차트) rather than a near-duplicate of it
+      id: 'dist', name: TR('분포 (텍스트)', 'distribution (text)'),
       render: function (body) {
         var pre = document.createElement('pre');
         pre.textContent = distText();
@@ -1253,14 +1594,14 @@
       }
     });
     registerTool({
-      id: 'trend', name: T('추세', 'time trend'),
+      id: 'trend', name: TR('추세 (선)', 'trend (line)'),
       render: function (body) {
         var c = toolCanvasIn(body);
         drawTrend(c);
       }
     });
     registerTool({
-      id: 'metro', name: T('메트로놈', 'metronome'),
+      id: 'metro', name: TR('메트로놈', 'metronome'),
       render: function (body) {
         var box = $('metroBox');
         box.style.display = 'block';
@@ -1527,15 +1868,63 @@
         opts().accent = b.dataset.v; saveDB(); applyOptions(); emit('options');
       });
     });
-    // tabs
+    // tabs — the three NEW pages carry .optPage; the six optPg* groups are always-on
+    // children of them, which is what keeps every registerOptionRow pageId resolving.
     document.querySelectorAll('#optTabs button').forEach(function (b) {
-      b.addEventListener('click', function () {
-        document.querySelectorAll('#optTabs button').forEach(function (x) { x.classList.remove('act'); });
-        document.querySelectorAll('.optPage').forEach(function (x) { x.classList.remove('act'); });
-        b.classList.add('act');
-        $(b.dataset.page).classList.add('act');
+      b.addEventListener('click', function () { showOptPage(b.dataset.page); });
+    });
+    // <details> state is a preference, not a transient: a user who opens 고급 means it
+    document.querySelectorAll('.optFold').forEach(function (d) {
+      var k = d.dataset.fold;
+      d.open = !!(opts().folds && opts().folds[k]);
+      d.addEventListener('toggle', function () {
+        var f = opts().folds || (opts().folds = {});
+        f[k] = d.open;
+        saveDB();
       });
     });
+    var srch = $('optSearch');
+    srch.addEventListener('input', function () { filterOptions(this.value); });
+    // Esc clears the filter before it closes the dialog
+    srch.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && this.value) { e.stopPropagation(); this.value = ''; filterOptions(''); }
+    });
+  }
+
+  function showOptPage(id) {
+    document.querySelectorAll('#optTabs button').forEach(function (x) {
+      x.classList.toggle('act', x.dataset.page === id);
+    });
+    document.querySelectorAll('.optPage').forEach(function (x) { x.classList.toggle('act', x.id === id); });
+  }
+  function openSettings(pageId) {
+    if (pageId) showOptPage(pageId);
+    showModal('optionsModal');
+  }
+
+  /* Reads the LIVE DOM on every keystroke — never a snapshot built at boot. That single
+   * choice is what makes every pack-injected row (feat_data's trash/backups/integrity,
+   * feat_vcube's gap/x-ray, feat_share's report, a future pack's row) searchable with
+   * zero pack edits: they are .orow elements in the document by the time you type. */
+  function filterOptions(q) {
+    q = String(q || '').trim().toLowerCase();
+    var searching = !!q;
+    document.body.classList.toggle('optSearching', searching);
+    var hits = 0;
+    document.querySelectorAll('.optPage').forEach(function (page) {
+      page.querySelectorAll('.orow').forEach(function (row) {
+        var on = !searching || row.textContent.toLowerCase().indexOf(q) >= 0;
+        row.classList.toggle('oHide', !on);
+        if (on && searching) {
+          hits++;
+          // a match inside a collapsed 고급 must not stay invisible
+          var d = row.closest('.optFold');
+          while (d) { d.open = true; d = d.parentElement.closest('.optFold'); }
+        }
+      });
+    });
+    // while searching, every page is shown at once — the row you want may be on any tab
+    $('optNoHits').style.display = (searching && !hits) ? 'block' : 'none';
   }
 
   var sysThemeMq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -1560,11 +1949,13 @@
     document.querySelectorAll('#themeSeg button').forEach(function (b) { b.classList.toggle('act', b.dataset.v === o.theme || (o.theme === 'default' && b.dataset.v === 'system')); });
     document.querySelectorAll('#accentSw button').forEach(function (b) { b.classList.toggle('act', b.dataset.v === o.accent); });
     applyI18nStatic();
+    // pack-injected rows are not covered by data-i18n; re-resolve their text in place
+    retranslateTree($('optionsModal'));
     fillAbout();
     fillHelp();
     applyInputMode();
     syncScrLenBox();
-    syncToolSelects();
+    refreshToolLabels();
     renderStats();
     renderScramble();
     setDisplay($('timerDisplay').textContent, $('timerDisplay').className.replace(/skin-\w+ ?/, ''));
@@ -1577,13 +1968,12 @@
     document.title = curEvent().name + ' — csTimer clone';
   }
 
+  /* The length field lives in the ⋯ 스크램블 popover and is built from scrLenFor() at open
+   * time, so there is no persistent box to keep in sync. Kept as a no-op-safe shim: it is
+   * cheap, and the one live input (if the popover happens to be open) still gets refreshed. */
   function syncScrLenBox() {
-    var ev = curEvent();
-    var box = $('scrLenBox');
-    if (ev.defLen) {
-      box.style.display = 'inline-flex';
-      $('scrLenInput').value = scrLenFor(ev);
-    } else box.style.display = 'none';
+    var inp = $('scrLenInput');
+    if (inp) inp.value = scrLenFor(curEvent());
   }
 
   /* =============== import / export =============== */
@@ -1709,6 +2099,82 @@
     }
   }
 
+  /* =============== header ⋯ menu =============== */
+  /* registerMenuButton does insertBefore(firstChild), so DOM order is REVERSE script-load
+   * order and every new pack silently jumps the queue. Rank explicitly instead. Unknown
+   * buttons keep their DOM order among themselves (Array#sort is stable) and land above
+   * the core utilities — so a pack that never adopts `id` still lands somewhere sane. */
+  /* `id` is the contract, but no pack passes one yet, so every pack row used to fall to the
+   * default rank and the map below was dead. Fall back to the i18n KEY the pack already
+   * passed to App.i18n for that very title (feat_vcube: 'vcube', feat_data: 'fBtn',
+   * feat_vcube_game: 'vcgTitle'). That key is the pack's own stable identifier — unlike the
+   * icon or the Korean label, it does not change when the pack re-words its UI, and those
+   * files are read-only to us. Both aliases are listed so adopting `id` later changes nothing.
+   * Every lookup soft-fails to rank 50, so an unknown button is mis-ORDERED, never broken. */
+  var MENU_RANK = {
+    vcube: 10, cubegame: 20, vcgTitle: 20, btnShareCard: 30, filter: 40, fBtn: 40,
+    btnHelp: 60, btnFullscreen: 70, btnExport: 80
+  };
+  function menuKey(b) {
+    if (b.dataset.menuId) return b.dataset.menuId;   // the contract, once a pack adopts it
+    if (b.id) return b.id;
+    /* Resolve the ambiguity by asking which of the keys this title was registered under is a
+     * key THIS menu knows — not whichever was recorded last. Order-independent. */
+    var keys = I18N_KEYS_OF[b.title];
+    for (var k in keys) if (MENU_RANK[k] != null) return k;
+    return '';
+  }
+  function isCubeBtn(b) { return menuKey(b) === 'vcube'; }
+  /* The pack's own menu button is the ONLY thing that knows the full cube semantics
+   * (feat_vcube.js: close the view if it is already open, otherwise open it). Find it once
+   * and let it stay the single source of truth for both the ⋯ row and the labeled button. */
+  function cubeMenuBtn() {
+    var mb = $('menuBtns');
+    if (!mb) return null;
+    return Array.prototype.filter.call(mb.children, isCubeBtn)[0] || null;
+  }
+  function menuRows() {
+    var btns = Array.prototype.slice.call($('menuBtns').children);
+    btns.sort(function (a, b) {
+      var ra = MENU_RANK[menuKey(a)], rb = MENU_RANK[menuKey(b)];
+      return (ra == null ? 50 : ra) - (rb == null ? 50 : rb);
+    });
+    return btns.filter(function (b) {
+      // the labeled [◧ 큐브] button already covers this destination
+      return !(isCubeBtn(b) && cubeAvailable());
+    }).map(function (b) {
+      return {
+        icon: b.innerHTML,
+        /* Packs translate the title ONCE at registration, so it is frozen at the boot
+         * language; re-resolve it here (core's own are handled by data-i18n-title). */
+        label: retranslate(b.title || b.getAttribute('aria-label') || ''),
+        onClick: function () { b.click(); }
+      };
+    });
+  }
+  function cubeAvailable() { return !!(window.VCubeFeat && window.VCubeFeat.open); }
+  /* The cube is a primary destination, so it gets a label instead of a glyph. Driven by
+   * the PUBLIC VCubeFeat.open() — no pack edit, no match on '⬜', and the pack keeps full
+   * ownership of body[data-cubeview] inside its own openPlay(). */
+  function syncCubeBtn() {
+    var b = $('btnCubeView');
+    if (!b) return;
+    b.hidden = !cubeAvailable();
+    /* The cube view is a destination that stays open, and the button is the control that
+     * governs it — so it must say so. Without this the button looks clickable, takes focus,
+     * and gives no hint that you are already there. */
+    var open = document.body.dataset.cubeview === '1';
+    b.setAttribute('aria-pressed', open ? 'true' : 'false');
+    b.classList.toggle('act', open);
+  }
+  /* body[data-cubeview] is written by the PACK, inside its own openPlay()/closeCubeView() —
+   * we deliberately never write it. Observing it is how the button learns the view's state
+   * without us reaching into the pack or duplicating its teardown. */
+  function watchCubeView() {
+    new MutationObserver(syncCubeBtn)
+      .observe(document.body, { attributes: true, attributeFilter: ['data-cubeview'] });
+  }
+
   /* =============== help / about =============== */
   function fillHelp() {
     $('helpBody').textContent = [
@@ -1733,7 +2199,8 @@
     a.style.color = 'var(--accent)';
     p.appendChild(a);
     p.appendChild(document.createElement('br'));
-    p.appendChild(document.createTextNode(T('미지원: 스택매트/블루투스, 버추얼 큐브, 솔버, 랜덤 스테이트 스크램블.', 'not supported: stackmat/bluetooth, virtual cube, solvers, random-state scrambles.')));
+    // the virtual cube SHIPPED (header button + tool + mobile tab); this list said otherwise
+    p.appendChild(document.createTextNode(T('미지원: 스택매트/블루투스, 솔버, 랜덤 스테이트 스크램블.', 'not supported: stackmat/bluetooth, solvers, random-state scrambles.')));
   }
 
   /* =============== App API (for feature packs) =============== */
@@ -1763,12 +2230,16 @@
       var pg = $(pageId);
       if (pg) buildFn(pg);
     },
+    /* `def.id` is OPTIONAL and additive: omit it and the behaviour is byte-identical to
+     * before. It is used only to order the ⋯ rows and to suppress the duplicate cube row.
+     * The returned element is still the real <button> (feat_share mutates .id/.title). */
     registerMenuButton: function (def) {
       var b = document.createElement('button');
       b.className = 'icon ghost';
       b.innerHTML = def.icon;
       b.title = def.title || '';
       b.setAttribute('aria-label', def.title || 'menu');
+      if (def.id) b.dataset.menuId = def.id;
       b.addEventListener('click', def.onClick);
       var mb = $('menuBtns');
       mb.insertBefore(b, mb.firstChild);
@@ -1795,7 +2266,10 @@
     addSolve: addSolve,
     updateSolve: updateSolve,
     deleteSolve: deleteSolve,
-    i18n: function (key, ko, en) { return T(ko, en); },
+    /* Records the pair (and the caller's key) so the produced string can be re-resolved on a
+     * later language change — see TR(). Return value is unchanged, so every existing caller
+     * behaves exactly as before. */
+    i18n: function (key, ko, en) { return TR(ko, en, key); },
     lang: lang,
     isMobile: isMobile,
     openTimeModal: openTimeModal
@@ -1808,7 +2282,7 @@
     var groups = { wca: document.createElement('optgroup'), tr: document.createElement('optgroup'), other: document.createElement('optgroup') };
     groups.wca.label = 'WCA';
     groups.tr.label = T('트레이너', 'trainer');
-    groups.other.label = T('기타', 'other');
+    groups.other.label = T('직접 입력', 'manual input');
     Scrambler.events.forEach(function (ev) {
       var o = document.createElement('option');
       o.value = ev.id; o.textContent = ev.name;
@@ -1824,8 +2298,22 @@
     hideQuickBar();
   }
 
+  /* The settings restructure re-parents these six containers but must never DROP one:
+   * registerOptionRow is `var pg = $(pageId); if (pg) buildFn(pg);` — it fails SILENTLY,
+   * so a missing container costs a pack its entire settings UI with no error anywhere.
+   * Fail loudly here instead of debugging it from a bug report six months from now. */
+  var OPT_PAGES = ['optPgTimer', 'optPgDisplay', 'optPgScramble', 'optPgStats', 'optPgData', 'optPgAbout'];
+  function assertOptPages() {
+    var missing = OPT_PAGES.filter(function (id) { return !$(id); });
+    if (missing.length) {
+      console.error('[app] settings mount points MISSING — packs will silently lose their option rows:', missing);
+    }
+    return !missing.length;
+  }
+
   function init() {
     loadDB();
+    assertOptPages();
     builtinTools();
 
     document.querySelectorAll('.modal').forEach(labelModal);
@@ -1841,24 +2329,18 @@
       emit('sessionChanged');
       if (this.value === 'input') openInputScramble();
     });
-    $('scrLenInput').addEventListener('change', function () {
-      var v = parseInt(this.value, 10);
-      var ev = curEvent();
-      if (!v || v < 1) { this.value = scrLenFor(ev); return; }
-      opts().scrLens[ev.id] = v;
-      saveDB();
-      nextQueued = null;
-      genScramble();
-    });
+    $('btnScrMore').addEventListener('click', function () { openPopover(this, scrambleRows()); });
     $('sessionSel').addEventListener('change', function () { this.blur(); switchSession(this.value); });
     $('btnSessAdd').addEventListener('click', addSession);
-    $('btnSessMgr').addEventListener('click', openSessionManager);
-    $('btnClearSession').addEventListener('click', clearSession);
-    $('btnLastScr').addEventListener('click', lastScramble);
-    $('btnNextScr').addEventListener('click', nextScramble);
-    $('btnReScr').addEventListener('click', function () { nextQueued = null; genScramble(); });
-    $('btnCopyScr').addEventListener('click', function () { copyText(currentScramble()); toast(T('스크램블 복사됨', 'scramble copied')); });
-    $('btnScrHistory').addEventListener('click', openScrHistory);
+    /* 관리 / 비우기 move into a ⋯ menu. The red 비우기 used to shout "destructive" at a
+     * user with 0 solves; it keeps its danger styling, one layer in. */
+    $('btnSessMore').addEventListener('click', function () {
+      openPopover(this, [
+        { icon: '&#9776;', label: T('세션 관리', 'manage sessions'), onClick: openSessionManager },
+        { divider: true },
+        { icon: '&#9003;', label: T('세션 비우기', 'clear session'), danger: true, onClick: clearSession }
+      ]);
+    });
     $('scrambleTxt').addEventListener('click', function () {
       if (curEvent().id === 'input') { openInputScramble(); return; }
       copyText(currentScramble());
@@ -1875,8 +2357,31 @@
       this.click();
     });
     $('btnOptions').addEventListener('click', function () { showModal('optionsModal'); });
-    $('btnExport').addEventListener('click', function () { showModal('exportModal'); });
-    $('btnOpenExport').addEventListener('click', function () { closeModals(); showModal('exportModal'); });
+    $('btnMore').addEventListener('click', function () { openPopover(this, menuRows()); });
+    /* Proxy the pack's OWN menu button rather than calling VCubeFeat.open() directly. open()
+     * is not a toggle — a second click just re-set body[data-cubeview]='1' and returned, so
+     * the labeled button was a dead click whenever the view was already open. The pack's menu
+     * button carries the toggle the pack author intended ("toggling matters on desktop: the
+     * view has no backdrop to click away") and owns its own teardown. Falling back to open()
+     * keeps the button working if the cube ever stops registering a menu button. */
+    $('btnCubeView').addEventListener('click', function () {
+      if (!cubeAvailable()) return;
+      var b = cubeMenuBtn();
+      if (b) b.click();
+      else window.VCubeFeat.open();
+    });
+    watchCubeView();
+    /* feat_vcube.js is a deferred script that runs AFTER app.js, so window.VCubeFeat does
+     * not exist yet at init(). DOMContentLoaded is specified to fire after every deferred
+     * script has executed; 'load' is a harmless idempotent belt-and-braces. */
+    // ...and feat_tools registers #ftlZoomModal on the same tick, so the ⤢ can only be
+    // decided once every deferred pack has run. Both handlers are idempotent.
+    function syncLate() { syncCubeBtn(); syncToolZoom(0); syncToolZoom(1); }
+    document.addEventListener('DOMContentLoaded', syncLate);
+    window.addEventListener('load', syncLate);
+    syncCubeBtn();
+    // the export modal is dissolved: ⇅ 데이터 now lands on the page its controls live on
+    $('btnExport').addEventListener('click', function () { openSettings('optPageData'); });
     $('btnHelp').addEventListener('click', openHelp);
     $('btnFullscreen').addEventListener('click', function () {
       if (document.fullscreenElement) document.exitFullscreen();

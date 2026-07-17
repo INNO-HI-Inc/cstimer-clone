@@ -23,7 +23,14 @@ Inject your own CSS with `App.addCSS(cssString)`.
 - `App.newScramble()` → advance to a fresh scramble
 - `window.ScrImage[imgKey].draw(canvas, scramble)` — imgKey from `event.img` ('333','pyr','skb','sq1','clk','mgm',...)
 
-## Events (subscribe: `App.on(name, fn)`)
+## Events (subscribe: `App.on(name, fn)`, publish: `App.emit(name, ...args)`)
+
+`App.emit(name, ...args)` is PUBLIC (js/app.js exports `{ on: on, emit: emit }`). A pack that
+writes solves through its own fallback path — rather than through `App.addSolve()` — has to
+emit `'solve'`/`'solvesChanged'` itself or the rest of the app never learns about the write;
+js/feat_vcube.js's `fallbackRecord()` does exactly this. Prefer `App.addSolve()`, which emits
+for you; reach for `emit` only when you have bypassed it.
+
 - `'solve'` (solve, index) — after a solve is added
 - `'solvesChanged'` () — any add/edit/delete/clear
 - `'sessionChanged'` () — current session switched (or event changed)

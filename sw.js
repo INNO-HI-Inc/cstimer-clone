@@ -20,7 +20,7 @@
  */
 'use strict';
 
-var CACHE_VERSION = 'v1.11.0';
+var CACHE_VERSION = 'v1.12.0';
 var CACHE_NAME = 'cstc-clone-' + CACHE_VERSION;
 var CACHE_PREFIX = 'cstc-clone-';
 
@@ -51,6 +51,7 @@ var CORE = [
   './js/feat_share.js',
   './js/vcube3d.js',
   './js/feat_vcube.js',
+  './js/feat_vcube_game.js',
   './js/feat_vcube_style.js'
 ];
 

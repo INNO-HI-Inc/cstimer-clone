@@ -112,7 +112,9 @@
     xrayBackScale: 1,
     xrayFrontAlpha: 1,
     xrayBackAlpha: 1,
-    xrayBodyAlpha: 0
+    xrayBodyAlpha: 0,
+    /* see-through stickers draw their own edge; see XRAY_EDGE_K */
+    xrayEdge: 0.72
   };
 
   /* STYLES — how the cube is BUILT, as opposed to what colours it wears (that is the palette
@@ -320,6 +322,10 @@
      * Below ~0.70 the cube stops reading as a cube and becomes floating confetti; at 0.94
      * the gaps are too mean to see much back through. 0.86 is the default middle. */
     var xrayStk = num(opts.xrayStickerSize, DEFAULTS.xrayStickerSize);
+    /* How dark a see-through sticker's own outline is, as a multiplier on its shaded colour.
+     * 0.72 is the loosest value that still carries the white face over a light --card; much
+     * lower and the cube grows a cartoon ink line. See the stroke in the sticker push. */
+    var XRAY_EDGE_K = num(opts.xrayEdge, DEFAULTS.xrayEdge);
 
     var cubies = buildCubies(n);
     var state = NNN.solved(n);
@@ -485,6 +491,30 @@
       for (var i = 0; i < drained.length; i++) settleTo(drained[i].solved, drained[i].ts);
     }
 
+    /* Drain the animation queue INSTANTLY, observing every pending transition in order and
+     * with its original keypress `ts`. The visual replay is skipped; the state is untouched
+     * (it already ran ahead at turn() time) — only the observation catches up.
+     *
+     * WHY THIS IS PUBLIC (do not inline this away): a caller that decides anything from a
+     * phase machine driven by onSolved MUST NOT read that phase while pending() > 0. The
+     * cube can be solved (isSolved() === true) for the whole length of the backlog while
+     * onSolved has not fired yet, so "am I still running?" answers YES for a solved cube.
+     * That is how Space-right-after-the-solving-move used to record a DNF over a finished
+     * solve. Callers now flush() first, then read the phase.
+     *
+     * The `ts` preservation is the load-bearing half: settleTo() fires with the queue
+     * entry's KEYPRESS stamp, so a flushed solve records the time you actually earned,
+     * not the time you pressed Space. */
+    function flush() {
+      if (dead || !queue.length) return api;
+      if (raf && g.cancelAnimationFrame) g.cancelAnimationFrame(raf);
+      raf = 0;
+      var drained = queue.splice(0, queue.length);
+      render();
+      for (var i = 0; i < drained.length; i++) settleTo(drained[i].solved, drained[i].ts);
+      return api;
+    }
+
     /* ---- view ---------------------------------------------------------- */
 
     function setView(y, p) {
@@ -616,7 +646,20 @@
           var lift = [cen[0] + nm[0] * 0.012, cen[1] + nm[1] * 0.012, cen[2] + nm[2] * 0.012];
           var stkA = xray ? (facing ? XRAY_FRONT_A : XRAY_BACK_A) : 1;
           var stkS = xray ? (facing ? xrayStk : xrayStk * XRAY_BACK_S) : stickerSize;
-          polys.push(quad(lift, u, vv, h * stkS, shade(rgbOf(col), k), stickerRadius * h, stkA));
+          var stk = quad(lift, u, vv, h * stkS, shade(rgbOf(col), k), stickerRadius * h, stkA);
+          /* SEE-THROUGH NEEDS ITS OWN EDGE.
+           * In opaque mode the black body draws a frame around every sticker for free. In
+           * xray mode XRAY_BODY_A is 0 — there is no body at all, just floating stickers —
+           * so a light-coloured sticker on a light page has NOTHING to read against: the
+           * white U face at full light renders rgb(237,239,243) against a --card of
+           * rgb(249,250,251), which is dE 2.72, at/below the just-noticeable difference. The
+           * cube's top-left silhouette simply dissolved into the page.
+           *
+           * The outline is the sticker's OWN colour darkened, not a fixed grey: it keeps the
+           * hue, it needs no knowledge of the theme (it reads on white and on near-black
+           * alike), and it cannot muddy a palette it does not know about. */
+          if (xray) stk.stroke = shade(rgbOf(col), k * XRAY_EDGE_K);
+          polys.push(stk);
         }
       }
 
@@ -672,12 +715,25 @@
       }
 
       var pxScale = f / dist;
+      var edgeW = Math.max(1, Math.round(dim.dpr || 1));   // 1 CSS px; coords are backing-store px
       for (var i = 0; i < polys.length; i++) {
         var P = polys[i];
         if (P.alpha < 1 && ctx.globalAlpha != null) ctx.globalAlpha = P.alpha;
         traceQuad(P.pts, P.radius * pxScale);
         ctx.fillStyle = P.fill;
         ctx.fill();
+        /* The one sanctioned stroke, and only at alpha 1 — which is exactly the case the
+         * no-fill-then-stroke rule above calls harmless ("invisible at alpha 1"). The rule
+         * exists because a stroke re-covers a rad-wide band of its own fill and that band
+         * composites TWICE when alpha < 1, rimming every translucent sticker. So: never
+         * stroke a translucent poly. A caller who dials xrayBackAlpha below 1 silently
+         * loses the outline on the far stickers, which is the correct trade — those are
+         * already being read as "far" by their transparency. */
+        if (P.stroke && P.alpha >= 1 && ctx.stroke) {
+          ctx.strokeStyle = P.stroke;
+          ctx.lineWidth = edgeW;
+          ctx.stroke();
+        }
         if (P.alpha < 1 && ctx.globalAlpha != null) ctx.globalAlpha = 1;
       }
 
@@ -689,7 +745,10 @@
         // one entry per drawn poly, in draw order (far -> near). Geometry is testable.
         get list() {
           return polys.map(function (q) {
-            return { alpha: q.alpha, size: q.size, radius: q.radius, fill: q.fill, depth: q.depth };
+            return {
+              alpha: q.alpha, size: q.size, radius: q.radius, fill: q.fill, depth: q.depth,
+              stroke: q.stroke || null
+            };
           });
         }
       };
@@ -749,6 +808,7 @@
       isSolved: isSolved,
       isAnimating: function () { return queue.length > 0; },
       pending: function () { return queue.length; },
+      flush: flush,
       render: render,
       applyStyle: applyStyle,
       // Extra canvases fed by this same state — e.g. a back view at dYaw:180.
@@ -776,7 +836,8 @@
         return {
           cubieSize: cubieSize, stickerSize: stickerSize, stickerRadius: stickerRadius,
           xrayStickerSize: xrayStk, xrayBackScale: XRAY_BACK_S,
-          xrayFrontAlpha: XRAY_FRONT_A, xrayBackAlpha: XRAY_BACK_A, xrayBodyAlpha: XRAY_BODY_A
+          xrayFrontAlpha: XRAY_FRONT_A, xrayBackAlpha: XRAY_BACK_A, xrayBodyAlpha: XRAY_BODY_A,
+          xrayEdge: XRAY_EDGE_K
         };
       },
       stats: function () { return lastStats; },
@@ -1025,11 +1086,52 @@
       assert('render: fill() called once per polygon (' + cv._calls.fill + ')', cv._calls.fill >= st.polys);
       assert('render: rounded stickers are traced with real arcs (' + cv._calls.arcTo + ' arcTo)',
         cv._calls.arcTo > 0);
-      assert('render: no stroke pass — a rounded sticker is ONE filled path, so alpha ' +
-        'cannot double-composite into a rim (' + cv._calls.stroke + ' strokes)', cv._calls.stroke === 0);
+      assert('render: OPAQUE mode has no stroke pass — a rounded sticker is ONE filled path, ' +
+        'so alpha cannot double-composite into a rim (' + cv._calls.stroke + ' strokes)',
+        cv._calls.stroke === 0);
       assert('render: globalAlpha is restored to 1 after the pass (no leak into the next frame)',
         cv.getContext().globalAlpha === 1);
       c.destroy();
+    })();
+
+    /* ---- 7a2. see-through stickers draw their own edge ------------------------------
+     * Opaque mode gets a sticker frame for free from the black body. Xray mode has NO body
+     * (xrayBodyAlpha 0), so without an edge the white U face (rgb(244,246,250) at full
+     * light) sits on a light --card (rgb(249,250,251)) at dE 1.7 — below the JND. The cube's
+     * silhouette literally dissolved into the page. The outline is the sticker's own colour
+     * darkened, which lifts it to dE ~17 on a light card and ~53 on a dark one. */
+    (function () {
+      var cx = create(stubCanvas(400, 400), { xray: true, duration: 0 });
+      var lx = cx.stats().list;
+      var stroked = lx.filter(function (q) { return !!q.stroke; });
+      assert('xray edge: every drawn sticker carries an outline (' + stroked.length + ')',
+        stroked.length > 0 && stroked.length === lx.filter(function (q) { return q.size < 0.5; }).length);
+      assert('xray edge: the outline is DARKER than the sticker it rims, never a fixed grey',
+        stroked.every(function (q) {
+          var f = q.fill.match(/\d+/g).map(Number), s = q.stroke.match(/\d+/g).map(Number);
+          return s[0] <= f[0] && s[1] <= f[1] && s[2] <= f[2] &&
+            (s[0] < f[0] || s[1] < f[1] || s[2] < f[2]);
+        }));
+      cx.destroy();
+      var co = create(stubCanvas(400, 400), { xray: false, duration: 0 });
+      assert('xray edge: OPAQUE mode adds no outlines — the body already frames every sticker',
+        co.stats().list.every(function (q) { return !q.stroke; }));
+      co.destroy();
+      /* The no-double-composite rule: a translucent sticker must NOT be stroked, or its rim
+       * band composites twice and every far sticker grows the dark edge the whole
+       * one-filled-path design exists to prevent. */
+      var cvT = stubCanvas(400, 400);
+      var ct = create(cvT, { xray: true, duration: 0, xrayBackAlpha: 0.4 });
+      var lt = ct.stats().list;
+      var far = lt.filter(function (q) { return q.alpha < 1; });
+      var near = lt.filter(function (q) { return q.alpha >= 1; });
+      assert('xray edge: translucent (far) stickers exist when xrayBackAlpha < 1', far.length > 0);
+      cvT._calls.stroke = 0;          // count ONE render, not create()'s render too
+      ct.render();
+      assert('xray edge: exactly the opaque stickers are stroked (' + cvT._calls.stroke +
+        ' strokes vs ' + near.length + ' opaque, ' + far.length + ' translucent skipped)',
+        cvT._calls.stroke === near.length);
+      ct.destroy();
     })();
 
     /* ---- 7b. lighting floor (item 8) ----
@@ -1315,6 +1417,59 @@
         assert('onSolved: state may already have advanced past solved (documented contract)',
           seen.length === 1 && seen[0].solvedNow === true);
         c.destroy();
+      })();
+
+      /* ---- flush(): drain the backlog NOW, in order, with the original keypress stamps ----
+       * This is what lets a caller ask "is the attempt still running?" without lying to
+       * itself. Without it, a solved cube reports phase='running' for the whole backlog and
+       * Space-right-after-the-solving-move records a DNF over a finished solve. */
+      withFakeRaf(function (pump) {
+        var c = create(stubCanvas(300, 300), { duration: 120 });
+        var seen = [];
+        c.setState("R U R' U'");
+        c.onSolved(function (ts) { seen.push(ts); });
+        // type the inverse at 4 distinct keypress stamps; nothing drains (no pump)
+        c.turn('U', 1000); c.turn('R', 1030); c.turn("U'", 1060); c.turn("R'", 1090);
+        assert('flush: backlog is pending and onSolved has NOT fired yet (the race window)',
+          c.pending() === 4 && seen.length === 0);
+        assert('flush: the cube is ALREADY solved while the queue is still full',
+          c.isSolved() === true);
+        c.flush();
+        assert('flush: drains the whole queue synchronously', c.pending() === 0);
+        assert('flush: onSolved fired exactly once (got ' + seen.length + ')', seen.length === 1);
+        assert('flush: onSolved ts is the SOLVING MOVE keypress (1090), not the flush time — ' +
+          'this is what keeps a flushed solve honest (got ' + seen[0] + ')', seen[0] === 1090);
+        assert('flush: state is untouched by flushing (it applied at turn() time)',
+          c.isSolved() === true);
+        c.flush(); // idempotent
+        assert('flush: is a no-op on an empty queue and does not re-fire onSolved',
+          c.pending() === 0 && seen.length === 1);
+        c.destroy();
+      });
+
+      /* flush() must observe a burst that passes THROUGH solved exactly like the animated
+       * and instant paths do — same equivalence the duration-independence tests protect. */
+      withFakeRaf(function () {
+        var c = create(stubCanvas(300, 300), { duration: 120 });
+        var fired = 0;
+        c.setState("R U R' U'");
+        c.onSolved(function () { fired++; });
+        c.turn("U R U' R' U");     // solves on R', then one fidget move
+        c.flush();
+        assert('flush: burst through solved is still observed exactly once (got ' + fired + ')',
+          fired === 1);
+        assert('flush: after a through-solved burst the cube is NOT solved', c.isSolved() === false);
+        c.destroy();
+      });
+
+      /* flush() on a dead engine must not throw — teardown can race a keypress. */
+      (function () {
+        var c = create(stubCanvas(300, 300), { duration: 120 });
+        c.setState('R');
+        c.destroy();
+        var threw = false;
+        try { c.flush(); } catch (e) { threw = true; }
+        assert('flush: safe to call after destroy()', threw === false);
       })();
 
       /* Reentrancy: turn() from inside onSolved must not spawn a second rAF loop, and the

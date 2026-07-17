@@ -22,14 +22,24 @@
    * Note green ~155 and blue ~267: real cube plastic is emerald and azure, NOT the
    * #00d800 / #0000f2 primaries the old palette used. That is most of the "cheap" look.
    *
-   * The engine renders each face at a brightness multiplier down to 0.70 (vcube3d.js
-   * :533), so every pair must stay separable at 0.70 as well as 1.00. Verified with a
-   * CIEDE2000 matrix under normal vision and under simulated deuteranopia/protanopia:
+   * The engine shades each face by shadeK(lit) (vcube3d.js — see LIGHT_FLOOR and the
+   * shadeK() call in the face loop), which bottoms out at LIGHT_FLOOR, so every pair must
+   * stay separable at the floor as well as at 1.00. LIGHT_FLOOR is 0.82: a fully unlit face
+   * keeps 82% of its value. If you retune LIGHT_FLOOR, re-run this table against the new
+   * floor — do NOT trust the numbers below, they are floor-specific.
    *
-   *   palette      min dE normal (1.00/0.70)   min dE colour-blind
-   *   old toy          23.1 / 19.8                 1.9   <- green==orange to a deuteranope
-   *   toss (default)   33.2 / 29.1                13.9
-   *   cvd (safe)             19.1                 19.2
+   * Minimum pairwise CIEDE2000 over all 15 face pairs; colour-blind columns use the Viénot
+   * LMS simulation. (An earlier version of this block quoted a 0.70 floor that no longer
+   * exists and a stale line number; the 0.70 column is kept only to show the direction of
+   * travel — the 0.82 column is the one that describes what ships.)
+   *
+   *   palette         1.00   0.82   0.70    deut   prot
+   *   old toy / classic 23.1   22.0   19.8    2.1   11.3   <- green==orange to a deuteranope
+   *   toss (default)    33.2   31.0   29.1   16.3   15.5
+   *   cvd (safe)        30.2   28.7   26.3   19.6   19.7
+   *
+   * Every palette that ships clears dE 22 at the floor under normal vision; the reason
+   * 'toss' is the default and 'classic' is opt-in is that 2.1 deuteranope column, not taste.
    *
    * A green leaning slightly teal (hue ~163) is deliberate: teal keeps blue content, and
    * the blue-yellow axis is the one red-green colour blindness preserves. It is what buys

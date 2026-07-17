@@ -6,8 +6,16 @@
  * Mixing them into one "theme" list would multiply into 15 entries that all look similar.
  *
  * Lives in its own file so it can be added without touching js/feat_vcube.js.
- * Applies live: VCube3D.setStyle() repaints every live instance, and the palette flows
- * through ScrImage.nnn.setPalette() so the 2D scramble net changes with the 3D cube.
+ * Applies live: VCube3D.setStyle() repaints every live instance.
+ *
+ * THIS FILE OWNS STYLE ONLY. It used to own a SECOND palette pref too — key
+ * 'cstc_pack_vcube_palette', with its own '큐브 색상' select in Settings > 화면 — competing
+ * with the cube panel's own 'cstc_pack_vcube_pal'. Because this file loads LAST it was the
+ * only palette restored at boot, from a key the cube panel never wrote, so the two controls
+ * and the actual pixels could disagree three ways at once. Palette now belongs to
+ * js/feat_vcube.js, next to the cube you are looking at while you change it (the user asked
+ * for exactly that: '큐브할때 환경설정 따로 만들어'). Its migratePalPref() adopts the old key.
+ * Do not re-add a palette row here.
  */
 (function () {
   'use strict';
@@ -15,34 +23,15 @@
   var App = window.App;
 
   var K_STYLE = 'cstc_pack_vcube_style';
-  var K_PAL = 'cstc_pack_vcube_palette';
 
   function T(k, ko, en) { return App.i18n(k, ko, en); }
   function get(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } }
   function set(k, v) { try { localStorage.setItem(k, v); } catch (e) { } }
 
   function styles() { return (window.VCube3D && window.VCube3D.styles) || []; }
-  function palettes() {
-    var n = window.ScrImage && window.ScrImage.nnn;
-    return (n && n.palettes) || [];
-  }
 
   function applyStyle(id) {
     if (window.VCube3D && window.VCube3D.setStyle) window.VCube3D.setStyle(id);
-  }
-
-  function applyPalette(id) {
-    var nnn = window.ScrImage && window.ScrImage.nnn;
-    if (!nnn) return;
-    /* draw_nnn owns the palette; the 3D engine defaults to nnn.colors, so setting it here
-     * moves the 2D net immediately and every NEW cube instance too. Live instances need a
-     * nudge because they snapshotted the array at create(). */
-    if (nnn.setPalette) nnn.setPalette(id);
-    var eng = window.VCubeFeat && window.VCubeFeat.engine && window.VCubeFeat.engine();
-    if (eng && eng.setPalette && nnn.colors) {
-      try { eng.setPalette(nnn.colors); } catch (e) { }
-    }
-    App.refresh && App.refresh();   // repaint the 2D scramble image
   }
 
   function row(page, labelText, list, cur, onPick) {
@@ -66,23 +55,13 @@
 
   function setup() {
     // restore before anything renders, so the first cube is already the chosen style
-    var st = get(K_STYLE, 'stickerless');
-    var pal = get(K_PAL, '');
-    applyStyle(st);
-    if (pal) applyPalette(pal);
+    applyStyle(get(K_STYLE, 'stickerless'));
 
     App.registerOptionRow && App.registerOptionRow('optPgDisplay', function (page) {
       row(page, T('vcStyle', '가상 큐브: 스타일', 'virtual cube: style'),
         styles(), get(K_STYLE, 'stickerless'), function (v) {
           set(K_STYLE, v); applyStyle(v);
         });
-      var pl = palettes();
-      if (pl.length) {
-        row(page, T('vcPal', '큐브 색상', 'cube colours'),
-          pl, get(K_PAL, pl[0].id), function (v) {
-            set(K_PAL, v); applyPalette(v);
-          });
-      }
     });
   }
 

@@ -53,8 +53,8 @@ body[data-mview="cube"] #cubePane {
 
 /* ---------- left/list view ---------- */
 #lbHeader { display: flex; align-items: center; gap: 4px; padding: 10px 12px; }
-#menuBtns { display: flex; gap: 4px; margin-left: auto; }
-#statsCard { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
+#summaryCard { display: flex; flex-direction: column; gap: 8px; flex: none; }
+#historyCard { flex: 1; display: flex; flex-direction: column; min-height: 0; gap: 8px; }
 #timeListWrap {
   flex: 1; overflow-y: auto; min-height: 0;
   margin: 0 -6px; padding: 0 6px;
@@ -65,22 +65,13 @@ body[data-mview="cube"] #cubePane {
 
 /* ---------- timer view ---------- */
 #topbar { padding: 10px 12px; flex: none; }
-#scrCtl {
-  margin-bottom: 6px; flex-wrap: nowrap; overflow-x: auto;
-  -webkit-overflow-scrolling: touch; scrollbar-width: none;
-  padding-bottom: 2px;
-}
-#scrCtl::-webkit-scrollbar { display: none; }
-/* reorder: what a thumb actually taps comes first, before the scroll cutoff */
-#scrCtl > * { flex: none; order: 5; }
-#scrCtl #eventSel { order: 0; font-size: 14px; max-width: 46vw; }
-#scrCtl #btnNextScr { order: 1; }
-#scrCtl #btnReScr { order: 2; }
-#scrCtl #btnCopyScr { order: 3; }
-#scrCtl #btnScrHistory { order: 4; }
-#scrCtl #btnLastScr { order: 6; }
-#scrCtl #scrLenBox { order: 7; margin-left: 0; }
-#scrCtl #scrMeta { order: 8; margin-left: 4px; align-self: center; }
+/* The bar used to scroll horizontally (scrollWidth 545 vs clientWidth 350) and clipped
+ * four controls off the right edge — 길이 / 이전 / 히스토리 / 手 were unreachable on a
+ * phone. They are popover rows now, so the bar simply fits: no scroller, no clipping. */
+#scrCtl { margin-bottom: 6px; flex-wrap: nowrap; }
+#scrCtl #eventSel { flex: 1; min-width: 0; font-size: 14px; }
+#scrCtl #scrMeta { flex: none; margin-left: auto; align-self: center; }
+#scrCtl #btnScrMore { flex: none; }
 
 #scrambleTxt {
   font-size: calc(15px * var(--scr-scale, 1));
@@ -133,7 +124,7 @@ body.solving.focusmode #padHint { opacity: 0; pointer-events: none; }
 /* ---------- touch targets ---------- */
 button { min-height: 40px; }
 button.icon { min-height: 36px; min-width: 36px; }
-.sessBtns button { min-height: 38px; }
+.popRow { min-height: 46px; }   /* popover rows are now a primary touch target */
 select, input[type="text"], input[type="number"] {
   min-height: 40px;
   font-size: 16px; /* 16px stops iOS Safari from zooming on focus */
@@ -157,7 +148,10 @@ select, input[type="text"], input[type="number"] {
 #mtabs button:active { transform: none; background: var(--hover); }
 #mtabs .ico { font-size: 17px; line-height: 1; }
 #mtabs .lbl { font-size: 10px; letter-spacing: 0; }
-#mtabs button.act { color: var(--accent); }
+/* --accent (#3182f6) is 3.71:1 on the card at 10px — the INACTIVE state was audited (see
+ * above) and the active one was missed. --accent-fg is the AA-rated foreground companion and
+ * is already re-tuned for dark, unlike --accent-aa (a background token for white text). */
+#mtabs button.act { color: var(--accent-fg); }
 
 /* ---------- bottom-sheet modals ---------- */
 .modal { align-items: flex-end; }

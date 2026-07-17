@@ -40,14 +40,20 @@
     var S = window.Stats;
     var sum = S.sessionSummary(solves);
     var f = function (v) { return v == null ? '-' : App.fmt(v); };
-    var ao5 = solves.length >= 5 ? S.averageOf(solves, solves.length - 1, 5) : null;
-    var ao12 = solves.length >= 12 ? S.averageOf(solves, solves.length - 1, 12) : null;
-    var cells = [
-      ['ao5', ao5 == null ? '-' : f(ao5)],
-      ['ao12', ao12 == null ? '-' : f(ao12)],
-      [t('베스트', 'best'), sum.best == null ? '-' : f(sum.best)],
-      [t('솔브', 'solves'), String(sum.count)]
-    ];
+    /* Progressive: a cell appears only once it can hold a number. A fresh session used to
+     * read "- - - 0" — 3 of 4 cells dead. Mirrors the >=5 / >=12 gate app.js applies to the
+     * summary table and the time-list columns. */
+    var cells = [];
+    if (solves.length >= 5) {
+      var ao5 = S.averageOf(solves, solves.length - 1, 5);
+      cells.push(['ao5', ao5 == null ? '-' : f(ao5)]);
+    }
+    if (solves.length >= 12) {
+      var ao12 = S.averageOf(solves, solves.length - 1, 12);
+      cells.push(['ao12', ao12 == null ? '-' : f(ao12)]);
+    }
+    if (sum.best != null) cells.push([t('베스트', 'best'), f(sum.best)]);
+    cells.push([t('솔브', 'solves'), String(sum.count)]);
     strip.textContent = '';
     cells.forEach(function (c) {
       var d = document.createElement('div');

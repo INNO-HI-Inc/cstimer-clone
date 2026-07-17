@@ -21,11 +21,24 @@
 <div id="leftbar">
   <div class="card" id="lbHeader">
     <div id="logo">cs<span>Timer</span><em>clone</em></div>
-    <div id="menuBtns" style="display:flex;gap:4px;">
-      <button class="icon ghost" id="btnHelp" title="shortcuts (?)" aria-label="shortcuts">?</button>
-      <button class="icon ghost" id="btnFullscreen" title="fullscreen" aria-label="fullscreen">&#x26F6;</button>
-      <button class="icon ghost" id="btnExport" title="data" aria-label="export / import">&#8645;</button>
-      <button class="icon ghost" id="btnOptions" title="settings" aria-label="settings">&#9881;</button>
+    <!-- 3 controls, was 7. The cube is promoted to a LABELED button because it is a
+         primary destination; everything else collapses into the ⋯ popover, which reads
+         its rows out of #menuBtns below. A gear is the one universally guessable icon,
+         so it stays visible. -->
+    <div id="lbActions">
+      <button class="lbCube" id="btnCubeView" data-i18n-title="cubeView" title="virtual cube" hidden>
+        <span class="lbCubeIco" aria-hidden="true">&#9707;</span><span data-i18n="cubeView">cube</span>
+      </button>
+      <button class="icon ghost" id="btnMore" data-i18n-title="more" title="more" aria-haspopup="menu" aria-expanded="false">&#8943;</button>
+      <button class="icon ghost" id="btnOptions" data-i18n-title="settings" title="settings">&#9881;</button>
+    </div>
+    <!-- STAYS IN THE DOM as the popover's list container: App.registerMenuButton keeps
+         appending real <button>s here verbatim, and #btnMore renders each one as an
+         icon+title row that proxies its clicks. Hidden via style.css, never removed. -->
+    <div id="menuBtns">
+      <button class="icon ghost" id="btnHelp" data-i18n-title="scShortcuts" title="shortcuts (?)">?</button>
+      <button class="icon ghost" id="btnFullscreen" data-i18n-title="scFullscreen" title="fullscreen">&#x26F6;</button>
+      <button class="icon ghost" id="btnExport" data-i18n-title="scData" title="data">&#8645;</button>
     </div>
   </div>
   <div id="logohint" aria-hidden="true"></div>
@@ -33,18 +46,26 @@
   <div class="card" id="sessCard">
     <div class="sessRow">
       <select id="sessionSel" aria-label="session"></select>
-    </div>
-    <div class="sessBtns">
-      <button id="btnSessAdd" title="new session" data-i18n="new">new</button>
-      <button id="btnSessMgr" title="manage sessions" data-i18n="manage">manage</button>
-      <button id="btnClearSession" class="danger" title="clear session" data-i18n="clear">clear</button>
+      <button class="icon ghost" id="btnSessAdd" data-i18n-title="new" title="new session">+</button>
+      <button class="icon ghost" id="btnSessMore" data-i18n-title="more" title="more" aria-haspopup="menu" aria-expanded="false">&#8943;</button>
     </div>
   </div>
 
-  <div class="card" id="statsCard">
+  <div class="card" id="summaryCard">
+    <div class="cardHead">
+      <span class="cardTitle" data-i18n="sumTitle">summary</span>
+      <span class="cardMeta" id="sumMeta"></span>
+    </div>
+    <table id="curBestTable"></table>
     <div id="statLine"></div>
     <div id="bpaLine" style="color:var(--sub);font-size:12px;display:none;font-variant-numeric:tabular-nums;"></div>
-    <table id="curBestTable"></table>
+  </div>
+
+  <div class="card" id="historyCard">
+    <div class="cardHead">
+      <span class="cardTitle" data-i18n="histTitle">times</span>
+      <span class="cardMeta" id="histCount"></span>
+    </div>
     <div id="timeListWrap">
       <div id="emptyState">
         <span class="big">&#128522;</span>
@@ -63,15 +84,18 @@ hold space, release, and go!</span>
 
 <div id="main">
   <div class="card" id="topbar">
+    <!-- 3 controls, was 8. 다시 생성 / 복사 / 이전 / 히스토리 / 길이 all became rows of the
+         ⋯ popover, which is what cures the mobile overflow (scrollWidth 545 vs 350): the
+         clipped controls become menu rows rather than getting a scroll hint. Those rows —
+         including the #scrLenInput length field — are built fresh by scrambleRows() in
+         app.js on every open, so a row that would be dead (이전 with no history) simply
+         does not exist rather than rendering greyed out. -->
     <div id="scrCtl">
       <select id="eventSel" aria-label="event"></select>
-      <span id="scrLenBox"><span data-i18n="len">len</span> <input id="scrLenInput" type="number" min="1" max="200" aria-label="scramble length"></span>
-      <button id="btnLastScr" title="last scramble (alt+&#8592;)" data-i18n="last">last</button>
-      <button id="btnNextScr" title="next scramble (alt+&#8594;)" data-i18n="next">next</button>
-      <button class="icon" id="btnReScr" title="regenerate" aria-label="regenerate">&#8635;</button>
-      <button class="icon" id="btnCopyScr" title="copy scramble" aria-label="copy scramble">&#10064;</button>
-      <button class="icon" id="btnScrHistory" title="scramble history" aria-label="scramble history">&#128337;</button>
       <span id="scrMeta"></span>
+      <button id="btnScrMore" data-i18n-title="scrMore" title="scramble" aria-haspopup="menu" aria-expanded="false">
+        <span aria-hidden="true">&#8943;</span> <span data-i18n="scrMore">scramble</span>
+      </button>
     </div>
     <div id="scrambleTxt" title="click to copy" role="button" tabindex="0"></div>
     <div id="nextPreview"></div>
@@ -104,11 +128,19 @@ hold space, release, and go!</span>
          identically to what app.js later writes via style.display — desktop.css
          keys its two-tool dock layout off that inline value with :has(). -->
     <div class="card toolCard" id="toolCard1" style="display: none;">
-      <div class="toolHead"><select id="toolSel1" aria-label="tool 2"></select></div>
+      <div class="toolHead">
+        <span class="toolTitle" data-i18n="toolsTitle">tools</span>
+        <select id="toolSel1" aria-label="tool 2"></select>
+        <button class="icon ghost toolZoom" id="toolZoom1" data-i18n-title="zoomImg" title="zoom" hidden>&#10530;</button>
+      </div>
       <div class="toolBody" id="toolBody1"></div>
     </div>
     <div class="card toolCard" id="toolCard0">
-      <div class="toolHead"><select id="toolSel0" aria-label="tool 1"></select></div>
+      <div class="toolHead">
+        <span class="toolTitle" data-i18n="toolsTitle">tools</span>
+        <select id="toolSel0" aria-label="tool 1"></select>
+        <button class="icon ghost toolZoom" id="toolZoom0" data-i18n-title="zoomImg" title="zoom" hidden>&#10530;</button>
+      </div>
       <div class="toolBody" id="toolBody0">
         <canvas id="toolCanvas" width="292" height="200"></canvas>
         <pre id="toolText"></pre>
@@ -127,15 +159,25 @@ hold space, release, and go!</span>
 <div class="modal" id="optionsModal" role="dialog" aria-modal="true">
   <div class="mbox">
     <div class="mtitle"><span data-i18n="settings">settings</span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <!-- 6 tabs / 45 rows -> 3 tabs / ~9 visible rows. The SIX optPg* containers all
+         survive verbatim as live mount points, re-parented into the three pages: every
+         App.registerOptionRow(pageId, fn) call site keeps resolving with zero pack edits.
+         Only the .optPage class moved onto the three NEW pages, so app.js's tab logic
+         switches those and the optPg* groups are always-on children.
+         RULE: a pack row must never land inside a fold, so each optPg* group stays
+         OUTSIDE the <details> and packs append to its visible tail. -->
     <div id="optTabs">
-      <button class="act" data-page="optPgTimer" data-i18n="tabTimer">timer</button>
-      <button data-page="optPgDisplay" data-i18n="tabDisplay">display</button>
-      <button data-page="optPgScramble" data-i18n="tabScramble">scramble</button>
-      <button data-page="optPgStats" data-i18n="tabStats">statistics</button>
-      <button data-page="optPgData" data-i18n="tabData">data</button>
-      <button data-page="optPgAbout" data-i18n="tabAbout">about</button>
+      <button class="act" data-page="optPageTimer" data-i18n="tabTimer">timer</button>
+      <button data-page="optPageDisplay" data-i18n="tabDisplay">display</button>
+      <button data-page="optPageData" data-i18n="tabData">data</button>
     </div>
-    <div class="optPage act" id="optPgTimer">
+    <!-- reads the LIVE DOM at keystroke time, so every pack-injected row is searchable
+         for free — see filterOptions() in app.js -->
+    <input id="optSearch" type="search" autocomplete="off" data-i18n-ph="srchOpt" placeholder="search settings">
+    <p id="optNoHits" class="onote" data-i18n="srchNone">no matches</p>
+
+    <div class="optPage act" id="optPageTimer">
+    <div class="optGroup" id="optPgTimer">
       <label class="orow"><span data-i18n="oInput">timer input</span>
         <select id="optInput">
           <option value="keyboard" data-i18n="oKeyboard">keyboard (space)</option>
@@ -160,6 +202,16 @@ hold space, release, and go!</span>
           <option value="1000">1 s</option>
         </select>
       </label>
+    </div>
+    <!-- optPgScramble takes no pack rows (verified: no registerOptionRow call site
+         names it), so it is free to hold just its one every-session control. -->
+    <div class="optGroup" id="optPgScramble">
+      <label class="orow"><span data-i18n="oShowImage">show scramble image</span>
+        <span class="tswitch"><input type="checkbox" id="optShowImage" checked><i></i></span>
+      </label>
+    </div>
+    <details class="optFold" data-fold="timer">
+      <summary data-i18n="advanced">advanced</summary>
       <label class="orow"><span data-i18n="oUpdate">display while running</span>
         <select id="optUpdate">
           <option value="cs" data-i18n="oEveryFrame">update every frame</option>
@@ -195,8 +247,31 @@ hold space, release, and go!</span>
       <label class="orow"><span data-i18n="oTarget">target time (s, 0=off)</span>
         <input type="number" id="optTarget" min="0" step="0.01" value="0">
       </label>
+      <label class="orow"><span data-i18n="oImgSize">image size</span>
+        <select id="optImgSize">
+          <option value="0.8" data-i18n="small">small</option>
+          <option value="1" data-i18n="normal">normal</option>
+          <option value="1.35" data-i18n="large">large</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oMono">monospace multi-line scrambles</span>
+        <span class="tswitch"><input type="checkbox" id="optMono" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oAutoCopy">auto-copy new scramble</span>
+        <span class="tswitch"><input type="checkbox" id="optAutoCopy"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oMoveCount">show move count</span>
+        <span class="tswitch"><input type="checkbox" id="optMoveCount" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oNextPrev">show next scramble preview</span>
+        <span class="tswitch"><input type="checkbox" id="optNextPreview"><i></i></span>
+      </label>
+      <p class="onote orow" data-i18n="scrNote">this clone generates high-quality random-move scrambles (official csTimer uses random-state for some events).</p>
+    </details>
     </div>
-    <div class="optPage" id="optPgDisplay">
+
+    <div class="optPage" id="optPageDisplay">
+    <div class="optGroup" id="optPgDisplay">
       <div class="orow"><span data-i18n="oTheme">theme</span>
         <span class="seg" id="themeSeg">
           <button data-v="light" data-i18n="light">light</button>
@@ -221,6 +296,14 @@ hold space, release, and go!</span>
           <option value="1.6" data-i18n="huge">huge</option>
         </select>
       </label>
+      <label class="orow"><span data-i18n="oLang">language</span>
+        <select id="optLang"><option value="en">English</option><option value="ko">한국어</option></select>
+      </label>
+    </div>
+    <!-- feat_data appends its "date headers" row here; it must stay OUT of the fold -->
+    <div class="optGroup" id="optPgStats"></div>
+    <details class="optFold" data-fold="display">
+      <summary data-i18n="advanced">advanced</summary>
       <label class="orow"><span data-i18n="oTimerSkin">timer font</span>
         <select id="optTimerSkin">
           <option value="default" data-i18n="oSkinDefault">default</option>
@@ -247,36 +330,8 @@ hold space, release, and go!</span>
       <label class="orow"><span data-i18n="oSecondTool">second tool panel</span>
         <span class="tswitch"><input type="checkbox" id="optSecondTool"><i></i></span>
       </label>
-      <label class="orow"><span data-i18n="oLang">language</span>
-        <select id="optLang"><option value="en">English</option><option value="ko">한국어</option></select>
-      </label>
-    </div>
-    <div class="optPage" id="optPgScramble">
-      <label class="orow"><span data-i18n="oShowImage">show scramble image</span>
-        <span class="tswitch"><input type="checkbox" id="optShowImage" checked><i></i></span>
-      </label>
-      <label class="orow"><span data-i18n="oImgSize">image size</span>
-        <select id="optImgSize">
-          <option value="0.8" data-i18n="small">small</option>
-          <option value="1" data-i18n="normal">normal</option>
-          <option value="1.35" data-i18n="large">large</option>
-        </select>
-      </label>
-      <label class="orow"><span data-i18n="oMono">monospace multi-line scrambles</span>
-        <span class="tswitch"><input type="checkbox" id="optMono" checked><i></i></span>
-      </label>
-      <label class="orow"><span data-i18n="oAutoCopy">auto-copy new scramble</span>
-        <span class="tswitch"><input type="checkbox" id="optAutoCopy"><i></i></span>
-      </label>
-      <label class="orow"><span data-i18n="oMoveCount">show move count</span>
-        <span class="tswitch"><input type="checkbox" id="optMoveCount" checked><i></i></span>
-      </label>
-      <label class="orow"><span data-i18n="oNextPrev">show next scramble preview</span>
-        <span class="tswitch"><input type="checkbox" id="optNextPreview"><i></i></span>
-      </label>
-      <p class="onote" data-i18n="scrNote">this clone generates high-quality random-move scrambles (official csTimer uses random-state for some events).</p>
-    </div>
-    <div class="optPage" id="optPgStats">
+      <details class="optFold" data-fold="stats">
+      <summary data-i18n="statDisp">statistics shown</summary>
       <label class="orow">mo3 <span class="tswitch"><input type="checkbox" id="optMo3"><i></i></span></label>
       <label class="orow">ao50 <span class="tswitch"><input type="checkbox" id="optAo50"><i></i></span></label>
       <label class="orow">ao100 <span class="tswitch"><input type="checkbox" id="optAo100"><i></i></span></label>
@@ -299,14 +354,51 @@ hold space, release, and go!</span>
       <label class="orow"><span data-i18n="oPbSound">PB sound</span>
         <span class="tswitch"><input type="checkbox" id="optPbSound"><i></i></span>
       </label>
+      </details>
+    </details>
     </div>
-    <div class="optPage" id="optPgData">
-      <div class="mbtns wrap">
-        <button id="btnOpenExport" data-i18n="openExport">export / import…</button>
+
+    <div class="optPage" id="optPageData">
+    <!-- The export/import modal is DISSOLVED into this page: its destination WAS the page
+         it lived on, so it was 3 levels deep to reach a button about the page you were
+         already looking at. Verified safe — no pack opens #exportModal, only app.js did.
+         Pack rows (storage meter, trash, backups, integrity, report) append below, visible. -->
+    <div class="optGroup" id="optPgData">
+      <div class="orow oStack">
+        <span data-i18n="expSection">backup / export</span>
+        <div class="mbtns wrap">
+          <button id="btnExpFile" class="primary" data-i18n="expFileAll">full backup (.json)</button>
+          <button id="btnExpCopy" data-i18n="expCopy">copy to clipboard</button>
+          <button id="btnExpCSV" data-i18n="expCsvSes">this session CSV</button>
+        </div>
+      </div>
+      <div class="orow oStack">
+        <span data-i18n="impSection">import</span>
+        <div class="mbtns wrap">
+          <label class="filebtn"><span data-i18n="impFile">import from file (.json/.csv · replaces all)</span>
+            <input type="file" id="impFile" accept=".txt,.json,.csv">
+          </label>
+        </div>
+        <!-- LIVE mount point: feat_data.js appends its import-merge button here and never
+             knows the export modal it was written for no longer exists. -->
+        <div class="mbtns wrap" id="expExtraBtns"></div>
+        <textarea id="impText" rows="3" data-i18n-ph="pasteJson" placeholder="or paste exported JSON here"></textarea>
+        <div class="mbtns wrap">
+          <button id="btnImpPaste" data-i18n="impPaste">import pasted JSON (replaces all)</button>
+        </div>
       </div>
     </div>
-    <div class="optPage" id="optPgAbout">
-      <p class="onote" id="aboutText"></p>
+    <!-- #optPgAbout is a LIVE pack mount point (feat_share.js:405 registers its OBS overlay
+         note here), so it must stay OUTSIDE the fold: a pack row must never land inside a
+         collapsed <details>. Only #aboutText — a row we own — is folded below. -->
+    <div class="optGroup" id="optPgAbout"></div>
+    <details class="optFold" data-fold="data">
+      <summary data-i18n="advanced">advanced</summary>
+      <p class="onote orow" id="aboutText"></p>
+      <label class="orow"><span data-i18n="resetAll">reset ALL data</span>
+        <button id="btnResetAll" class="danger" data-i18n="resetBtn">reset</button>
+      </label>
+    </details>
     </div>
   </div>
 </div>
@@ -334,28 +426,13 @@ hold space, release, and go!</span>
   </div>
 </div>
 
-<!-- export modal -->
+<!-- export modal — DISSOLVED into 설정 ▸ 데이터 (its controls now render inline there).
+     The shell stays in the DOM, emptied, so a future pack that calls showModal('exportModal')
+     still finds a real dialog rather than a null. -->
 <div class="modal" id="exportModal" role="dialog" aria-modal="true">
   <div class="mbox">
     <div class="mtitle"><span data-i18n="exportTitle">export / import</span> <button class="mclose" aria-label="close">&#10005;</button></div>
-    <div class="mbody">
-      <div class="mbtns wrap">
-        <button id="btnExpFile" class="primary" data-i18n="expFile">export to file</button>
-        <button id="btnExpCopy" data-i18n="expCopy">copy to clipboard</button>
-        <button id="btnExpCSV" data-i18n="expCsv">session CSV</button>
-      </div>
-      <div class="mbtns wrap" id="expExtraBtns"></div>
-      <div class="mbtns wrap">
-        <label class="filebtn"><span data-i18n="impFile">import from file (clone or csTimer .json)</span>
-          <input type="file" id="impFile" accept=".txt,.json,.csv">
-        </label>
-      </div>
-      <textarea id="impText" rows="4" data-i18n-ph="pasteJson" placeholder="or paste exported JSON here"></textarea>
-      <div class="mbtns">
-        <button id="btnImpPaste" data-i18n="impPaste">import pasted text</button>
-        <button id="btnResetAll" class="danger" data-i18n="resetAll">reset ALL data</button>
-      </div>
-    </div>
+    <div class="mbody"></div>
   </div>
 </div>
 
@@ -411,7 +488,10 @@ hold space, release, and go!</span>
   <button data-view="list"><span class="ico">&#9776;</span><span class="lbl" data-i18n="mvList">times</span></button>
   <button data-view="cube"><span class="ico">&#9707;</span><span class="lbl" data-i18n="mvCube">cube</span></button>
   <button data-view="tools"><span class="ico">&#9636;</span><span class="lbl" data-i18n="mvTools">tools</span></button>
-  <button data-view="more"><span class="ico">&#9881;</span><span class="lbl" data-i18n="mvMore">more</span></button>
+  <!-- an ACTION, not a pane: it opens the settings sheet and leaves the current view (and
+       its highlight) alone — mobile.js returns before touching the highlight. The ⚙ glyph
+       + "설정"/"settings" is what announces it as a sheet (the standard iOS pattern). -->
+  <button data-view="more" aria-haspopup="dialog"><span class="ico">&#9881;</span><span class="lbl" data-i18n="mvMore">settings</span></button>
 </nav>
 
 <div id="toasts" aria-live="polite"></div>
@@ -439,6 +519,7 @@ hold space, release, and go!</span>
 <script defer src="js/feat_tools.js"></script>
 <script defer src="js/feat_share.js"></script>
 <script defer src="js/feat_vcube.js"></script>
+<script defer src="js/feat_vcube_game.js"></script>
 <script defer src="js/feat_vcube_style.js"></script>
 </body>
 </html>
