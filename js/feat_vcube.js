@@ -993,9 +993,33 @@
       if (!st.open || !eng) return;
       if (st.phase === 'idle' || st.phase === 'ready') applyScramble();
     });
+
+    /* Changing the event while the cube is up used to strand you: the engine is built for a
+     * fixed size at beginPlay(), so 3x3 -> 4x4 left a dead 3x3 engine, and 3x3 -> pyraminx
+     * left a dead view with the timer hidden and no way back. Rebuild for a new cube size,
+     * and get out of the way entirely for a puzzle we cannot simulate. */
     App.on('sessionChanged', function () {
-      if (st.open) { teardownPlay(); App.closeModals && App.closeModals(); }
+      if (!st.open && !cubeViewOpen()) return;
+      var n = cubeSizeOf(App.currentEvent && App.currentEvent());
+      if (!n) {
+        var ev = App.currentEvent && App.currentEvent();
+        App.toast && App.toast(
+          T('vcubeLeft', (ev && ev.name ? ev.name : '이 종목') + '은(는) 가상 큐브를 지원하지 않아 닫았어요',
+            'the virtual cube does not support ' + (ev && ev.name ? ev.name : 'this event') + ' — closed'),
+          { type: 'error' });
+        if (cubeViewOpen()) closeCubeView();
+        else { unmount(); App.closeModals && App.closeModals(); }
+        return;
+      }
+      if (n === st.n) return;      // same size: the 'scramble' handler already re-applied
+      var h = host;                 // rebuild the engine at the new size, in place
+      if (h) { teardownPlay(); buildInto(h); beginPlay(); }
     });
+    /* (There used to be a second sessionChanged handler here that just tore the engine down
+     * and called closeModals(). As a modal that merely closed the overlay; once the cube
+     * became a VIEW it left a dead canvas on screen with the timer hidden and no way out —
+     * and it ran after the rebuild above, killing the new engine on the same tick. The
+     * handler above now owns every event change.) */
 
     /* if a persisted option already points at our tool, the core rendered its fallback
      * before we registered — repaint those slots now */
