@@ -160,6 +160,10 @@
     '.vcStage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;',
     'background:var(--card2);border-radius:var(--radius-card);position:relative;overflow:hidden;}',
     '.vcStage canvas{display:block;touch-action:none;cursor:grab;}',
+    /* two-cube (front + back) layout; gap only, sizing is done in fitCanvas() */
+    '.vcStage.vcTwo{gap:8px;}',
+    '.vcBack{opacity:.97;}',
+    '.vcLcd.vcDone{color:var(--green);}',
     '.vcStage canvas:active{cursor:grabbing;}',
     '.vcHint{position:absolute;left:0;right:0;bottom:8px;text-align:center;color:var(--sub);',
     'font-size:12px;pointer-events:none;padding:0 10px;}',
@@ -306,6 +310,15 @@
     /* Bound ONCE, here, for the life of the canvas — never per open. See bindOrbit(). */
     bindOrbit(ui.canvas, function () { return eng; });
     ui.stage.appendChild(ui.canvas);
+
+    /* Back view: three faces are always hidden behind the cube. This is a second canvas
+     * fed by the SAME engine state at yaw+180 (engine.addView), so it can never disagree
+     * with the front — and it orbits with it. */
+    ui.back = document.createElement('canvas'); ui.back.className = 'vcBack';
+    ui.back.style.display = 'none';
+    bindOrbit(ui.back, function () { return eng; });
+    ui.stage.appendChild(ui.back);
+
     ui.hint = document.createElement('div'); ui.hint.className = 'vcHint';
     ui.stage.appendChild(ui.hint);
     body.appendChild(ui.stage);
@@ -335,12 +348,30 @@
 
     var btns = document.createElement('div');
     btns.style.cssText = 'display:flex;gap:8px;';
+
+    /* In-place back-view toggle: mid-solve nobody is going to dig through settings. */
+    ui.backBtn = document.createElement('button');
+    ui.backBtn.className = 'btn';
+    ui.backBtn.addEventListener('click', function () {
+      setBack(!backOn());
+      syncBackBtn();
+    });
+    btns.appendChild(ui.backBtn);
+
     var reset = document.createElement('button');
-    reset.className = 'btn';
+    reset.className = 'btn primary';
     reset.textContent = T('vcubeReset', '스크램블 적용', 'apply scramble');
-    reset.addEventListener('click', applyScramble);
+    reset.addEventListener('click', function () {
+      if (st.phase === 'running') {
+        App.toast && App.toast(T('vcubeSpaceRun', '측정 중입니다. Esc 로 취소하세요.',
+          'solve in progress — press Esc to cancel.'), { type: 'error' });
+        return;
+      }
+      applyScramble();
+    });
     btns.appendChild(reset);
     foot.appendChild(btns);
+    syncBackBtn();
     body.appendChild(foot);
 
     ui.bad = document.createElement('div'); ui.bad.className = 'vcBad';
@@ -366,6 +397,36 @@
    * the modal's own body would be misread as a pane and lose its scramble line. Track the
    * body element directly, set before the build runs. */
   function isPaneHost() { return !!host && host !== modalBody; }
+
+  /* ---- back view ---- */
+  var PREF_BACK = 'cstc_pack_vcube_back';
+  function backOn() {
+    try { return localStorage.getItem(PREF_BACK) === '1'; } catch (e) { return false; }
+  }
+  function setBack(on) {
+    try { localStorage.setItem(PREF_BACK, on ? '1' : '0'); } catch (e) { }
+    syncBackView();
+  }
+  function syncBackBtn() {
+    if (!ui.backBtn) return;
+    var on = backOn();
+    ui.backBtn.textContent = on
+      ? T('vcubeBackOff', '뒷면 숨기기', 'hide back')
+      : T('vcubeBackOn', '뒷면 보기', 'show back');
+    ui.backBtn.classList.toggle('primary', on);
+  }
+
+  function syncBackView() {
+    syncBackBtn();
+    if (!ui.back || !ui.stage) return;
+    var on = backOn();
+    ui.back.style.display = on ? '' : 'none';
+    ui.stage.classList.toggle('vcTwo', on);
+    if (!eng) return;
+    if (on) eng.addView(ui.back, { dYaw: 180 });
+    else eng.removeView(ui.back);
+    fitCanvas();
+  }
 
   function ensureModal() {
     if (M) return M;
@@ -396,7 +457,23 @@
     if (!ui.stage || !ui.canvas || !eng) return;
     var w = ui.stage.clientWidth, h = ui.stage.clientHeight;
     if (!w || !h) return;
-    var side = Math.max(160, Math.floor(Math.min(w, h) - 16));
+    var two = backOn() && ui.back;
+    var side;
+    if (two) {
+      /* Two cubes share the stage. Lay them out along the LONGER axis so a wide desktop
+       * stage puts them side by side and a tall phone stage stacks them, and never let a
+       * pair be larger than a single cube would have been. */
+      var horiz = w >= h;
+      side = horiz
+        ? Math.min(Math.floor((w - 24) / 2), h - 16)
+        : Math.min(w - 16, Math.floor((h - 24) / 2));
+      side = Math.max(110, side);
+      ui.stage.style.flexDirection = horiz ? 'row' : 'column';
+      ui.back.style.width = ui.back.style.height = side + 'px';
+    } else {
+      side = Math.max(160, Math.floor(Math.min(w, h) - 16));
+      ui.stage.style.flexDirection = '';
+    }
     ui.canvas.style.width = side + 'px';
     ui.canvas.style.height = side + 'px';
     eng.render();
@@ -512,6 +589,7 @@
     showScramble();
     setHint(T('vcubeSolved', '완성! Space 로 다음 스크램블을 적용합니다.',
       'solved! press Space to apply the next scramble.'));
+    if (ui.lcd) ui.lcd.classList.add('vcDone');
     App.toast && App.toast(T('vcubeRec', '가상 큐브 기록 저장됨', 'virtual solve recorded'),
       { type: 'success' });
   }
@@ -537,6 +615,21 @@
     }
     st.moves++;
     eng.turn(token, ts);
+  }
+
+  /* csTimer applies the scramble on SPACE, not on open: the cube sits SOLVED until you
+   * ask for it. We used to apply on open, which left Space re-applying the same scramble
+   * onto an already-scrambled cube — visually a no-op, so Space looked broken. */
+  function armSolved() {
+    if (!eng) return;
+    abort(true);
+    st.moves = 0;
+    eng.setState(''); // solved
+    lcd('0.00', '');
+    showScramble();
+    st.phase = 'idle';
+    setHint(T('vcubeArm', 'Space 를 눌러 스크램블을 적용하고 시작합니다.',
+      'press Space to apply the scramble and start.'));
   }
 
   function applyScramble() {
@@ -586,6 +679,12 @@
 
     if (e.code === 'Space') {
       e.preventDefault(); e.stopPropagation();
+      /* Never let Space silently bin a live attempt — that is someone's solve. */
+      if (st.phase === 'running') {
+        App.toast && App.toast(T('vcubeSpaceRun', '측정 중입니다. Esc 로 취소하세요.',
+          'solve in progress — press Esc to cancel.'), { type: 'error' });
+        return;
+      }
       applyScramble();
       return;
     }
@@ -673,8 +772,10 @@
 
     fitCanvas();
     observeStage();
+    syncBackView();
     document.addEventListener('keydown', onKey, true);
-    applyScramble();
+    /* Open SOLVED and wait for Space — csTimer's flow, and it makes Space mean something. */
+    armSolved();
     return true;
   }
 
@@ -732,6 +833,21 @@
       icon: '⬜',
       title: T('vcube', '가상 큐브', 'virtual cube'),
       onClick: openPlay
+    });
+
+    /* settings */
+    App.registerOptionRow && App.registerOptionRow('optPgDisplay', function (page) {
+      var row = document.createElement('label');
+      row.className = 'orow';
+      var label = document.createElement('span');
+      label.textContent = T('vcubeBackOpt', '가상 큐브: 뒷면 함께 보기', 'virtual cube: show the back');
+      var sw = document.createElement('span'); sw.className = 'tswitch';
+      var inp = document.createElement('input'); inp.type = 'checkbox'; inp.checked = backOn();
+      var i = document.createElement('i');
+      inp.addEventListener('change', function () { setBack(inp.checked); });
+      sw.appendChild(inp); sw.appendChild(i);
+      row.appendChild(label); row.appendChild(sw);
+      page.appendChild(row);
     });
 
     /* Re-apply only from a NOT-yet-started attempt. Notably 'done' must be excluded: recording

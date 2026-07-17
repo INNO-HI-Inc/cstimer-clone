@@ -242,15 +242,20 @@
      * DEFAULT FRAMING: yaw=-30, pitch=37.5 puts the camera in the (+x,+y,+z) octant
      * => U, R and F are the three visible faces (csTimer's 'URF' / vrcOri '10,11',
      * theta=30deg, phi=37.5deg). */
-    function toView(p) {
-      var q = rotAxis(p, 1, yaw * DEG);
-      return rotAxis(q, 0, pitch * DEG);
+    /* Camera maths are parameterised by (yaw,pitch) so the SAME state can be drawn from a
+     * second angle (the back view) without a second engine — two engines would be two
+     * states that can drift, and a back view that lies is worse than no back view. */
+    function toViewAt(p, y, pi) {
+      var q = rotAxis(p, 1, y * DEG);
+      return rotAxis(q, 0, pi * DEG);
     }
+    function toView(p) { return toViewAt(p, yaw, pitch); }
     // exact inverse of toView applied to the view-space camera at (0,0,dist)
-    function cameraWorld() {
-      var p = rotAxis([0, 0, dist], 0, -pitch * DEG);
-      return rotAxis(p, 1, -yaw * DEG);
+    function cameraWorldAt(y, pi) {
+      var p = rotAxis([0, 0, dist], 0, -pi * DEG);
+      return rotAxis(p, 1, -y * DEG);
     }
+    function cameraWorld() { return cameraWorldAt(yaw, pitch); }
 
     /* ---- state --------------------------------------------------------- */
 
@@ -405,22 +410,36 @@
     // without bound. Fall back to the last good CSS size instead.
     var cssW = opts.width || 300, cssH = opts.height || 300;
 
-    function resize() {
-      if (!canvas) return { w: cssW, h: cssH, dpr: 1 };
+    /* isMain caches the CSS box on the instance (the main canvas defines the projection
+     * scale); attached views measure themselves and fall back to the main box under the
+     * node stub, where clientWidth does not exist. */
+    function resizeCanvas(cv, isMain) {
+      if (!cv) return { w: cssW, h: cssH, dpr: 1 };
       var dpr = (g.devicePixelRatio || 1);
-      if (canvas.clientWidth > 0) cssW = canvas.clientWidth;
-      if (canvas.clientHeight > 0) cssH = canvas.clientHeight;
-      var w = Math.max(1, Math.round(cssW * dpr)), h = Math.max(1, Math.round(cssH * dpr));
-      if (canvas.width !== w) canvas.width = w;
-      if (canvas.height !== h) canvas.height = h;
+      var w0, h0;
+      if (isMain) {
+        if (cv.clientWidth > 0) cssW = cv.clientWidth;
+        if (cv.clientHeight > 0) cssH = cv.clientHeight;
+        w0 = cssW; h0 = cssH;
+      } else {
+        w0 = cv.clientWidth > 0 ? cv.clientWidth : cssW;
+        h0 = cv.clientHeight > 0 ? cv.clientHeight : cssH;
+      }
+      var w = Math.max(1, Math.round(w0 * dpr)), h = Math.max(1, Math.round(h0 * dpr));
+      if (cv.width !== w) cv.width = w;
+      if (cv.height !== h) cv.height = h;
       return { w: w, h: h, dpr: dpr };
     }
+    function resize() { return resizeCanvas(canvas, true); }
 
-    function render() {
-      if (dead || !canvas) return lastStats;
-      var ctx = canvas.getContext && canvas.getContext('2d');
+    /* Draw the current state into `cv` from (vYaw,vPitch). The main canvas and every
+     * attached view (e.g. the back view at yaw+180) go through here, so they can never
+     * show different states. */
+    function renderView(cv, vYaw, vPitch, isMain) {
+      if (dead || !cv) return lastStats;
+      var ctx = cv.getContext && cv.getContext('2d');
       if (!ctx) return lastStats;
-      var dim = resize();
+      var dim = resizeCanvas(cv, isMain);
       var W = dim.w, H = dim.h;
       ctx.clearRect(0, 0, W, H);
 
@@ -432,7 +451,7 @@
       var f = (Math.min(W, H) * 0.5) / Math.tan(fov * 0.5 * DEG) * (opts.zoom || 0.95);
 
       function project(p) {
-        var v = toView(p);
+        var v = toViewAt(p, vYaw, vPitch);
         var depth = dist - v[2];
         if (depth < 0.05) depth = 0.05;
         return [cx + v[0] * f / depth, cy - v[1] * f / depth, depth];
@@ -444,7 +463,7 @@
         return [l[0] / m, l[1] / m, l[2] / m];
       })();
 
-      var camW = cameraWorld();
+      var camW = cameraWorldAt(vYaw, vPitch);
       var h = cubieSize / 2;
       var polys = [], culled = 0;
 
@@ -539,10 +558,33 @@
       return lastStats;
     }
 
+    /* Extra canvases showing the same state from a fixed yaw/pitch offset. */
+    var views = [];
+    function addView(cv, o) {
+      if (!cv) return;
+      removeView(cv);
+      o = o || {};
+      views.push({ canvas: cv, dYaw: o.dYaw == null ? 180 : o.dYaw, dPitch: o.dPitch || 0 });
+      render();
+    }
+    function removeView(cv) {
+      for (var i = views.length - 1; i >= 0; i--) if (views[i].canvas === cv) views.splice(i, 1);
+    }
+    function clearViews() { views.length = 0; }
+
+    function render() {
+      var s = renderView(canvas, yaw, pitch, true);
+      for (var i = 0; i < views.length; i++) {
+        renderView(views[i].canvas, yaw + views[i].dYaw, pitch + views[i].dPitch, false);
+      }
+      return s;
+    }
+
     /* ---- lifecycle ------------------------------------------------------ */
 
     function destroy() {
       dead = true;
+      views.length = 0;
       if (raf && g.cancelAnimationFrame) g.cancelAnimationFrame(raf);
       raf = 0; queue.length = 0; canvas = null;
     }
@@ -555,6 +597,11 @@
       isAnimating: function () { return queue.length > 0; },
       pending: function () { return queue.length; },
       render: render,
+      // Extra canvases fed by this same state — e.g. a back view at dYaw:180.
+      // One state, N angles: they cannot drift the way two engines would.
+      addView: addView,
+      removeView: removeView,
+      clearViews: clearViews,
       setView: setView,
       getView: getView,
       dragBy: dragBy,
