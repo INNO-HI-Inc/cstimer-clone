@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="description" content="Speedcubing timer — csTimer functional clone with Toss-style design">
+<meta name="theme-color" content="#3182f6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>csTimer clone</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="light" data-accent="blue">
+
+<div id="leftbar">
+  <div class="card" id="lbHeader">
+    <div id="logo">cs<span>Timer</span><em>clone</em></div>
+    <div id="menuBtns" style="display:flex;gap:4px;">
+      <button class="icon ghost" id="btnHelp" title="shortcuts (?)" aria-label="shortcuts">?</button>
+      <button class="icon ghost" id="btnFullscreen" title="fullscreen" aria-label="fullscreen">&#x26F6;</button>
+      <button class="icon ghost" id="btnExport" title="data" aria-label="export / import">&#8645;</button>
+      <button class="icon ghost" id="btnOptions" title="settings" aria-label="settings">&#9881;</button>
+    </div>
+  </div>
+  <div id="logohint" aria-hidden="true"></div>
+
+  <div class="card" id="sessCard">
+    <div class="sessRow">
+      <select id="sessionSel" aria-label="session"></select>
+    </div>
+    <div class="sessBtns">
+      <button id="btnSessAdd" title="new session" data-i18n="new">new</button>
+      <button id="btnSessMgr" title="manage sessions" data-i18n="manage">manage</button>
+      <button id="btnClearSession" class="danger" title="clear session" data-i18n="clear">clear</button>
+    </div>
+  </div>
+
+  <div class="card" id="statsCard">
+    <div id="statLine"></div>
+    <div id="bpaLine" style="color:var(--sub);font-size:12px;display:none;font-variant-numeric:tabular-nums;"></div>
+    <table id="curBestTable"></table>
+    <div id="timeListWrap">
+      <div id="emptyState">
+        <span class="big">&#128522;</span>
+        <span data-i18n="emptyHint">no solves yet.<br>hold space, release, and go!</span>
+      </div>
+      <table id="timeList"></table>
+    </div>
+  </div>
+</div>
+
+<div id="main">
+  <div class="card" id="topbar">
+    <div id="scrCtl">
+      <select id="eventSel" aria-label="event"></select>
+      <span id="scrLenBox"><span data-i18n="len">len</span> <input id="scrLenInput" type="number" min="1" max="200" aria-label="scramble length"></span>
+      <button id="btnLastScr" title="last scramble (alt+&#8592;)" data-i18n="last">last</button>
+      <button id="btnNextScr" title="next scramble (alt+&#8594;)" data-i18n="next">next</button>
+      <button class="icon" id="btnReScr" title="regenerate" aria-label="regenerate">&#8635;</button>
+      <button class="icon" id="btnCopyScr" title="copy scramble" aria-label="copy scramble">&#10064;</button>
+      <button class="icon" id="btnScrHistory" title="scramble history" aria-label="scramble history">&#128337;</button>
+      <span id="scrMeta"></span>
+    </div>
+    <div id="scrambleTxt" title="click to copy" role="button" tabindex="0"></div>
+    <div id="nextPreview"></div>
+  </div>
+
+  <div id="timerPad">
+    <div id="timerDisplay" aria-live="off">0.00</div>
+    <div id="inspBar"><i></i></div>
+    <div id="phaseInfo"></div>
+    <input id="manualInput" type="text" placeholder="12.34" autocomplete="off" spellcheck="false" aria-label="manual time entry">
+    <div id="quickBar" role="toolbar" aria-label="last solve actions">
+      <button id="qbOK" data-i18n="ok">OK</button>
+      <button id="qbP2">+2</button>
+      <button id="qbDNF">DNF</button>
+      <button id="qbComment" data-i18n="comment">comment</button>
+      <button id="qbDel" class="danger" data-i18n="delete">delete</button>
+    </div>
+    <div id="padHint"></div>
+  </div>
+
+  <div id="toolDock">
+    <div class="card toolCard" id="toolCard1" style="display:none;">
+      <div class="toolHead"><select id="toolSel1" aria-label="tool 2"></select></div>
+      <div class="toolBody" id="toolBody1"></div>
+    </div>
+    <div class="card toolCard" id="toolCard0">
+      <div class="toolHead"><select id="toolSel0" aria-label="tool 1"></select></div>
+      <div class="toolBody" id="toolBody0">
+        <canvas id="toolCanvas" width="292" height="200"></canvas>
+        <pre id="toolText"></pre>
+        <div id="metroBox">
+          <label>bpm <input id="metroBpm" type="number" min="20" max="250" value="60"></label>
+          <input id="metroSlider" type="range" min="20" max="250" value="60" style="width:120px;vertical-align:middle;">
+          <button id="metroTap" data-i18n="tap">tap</button>
+          <button id="metroToggle" data-i18n="start">start</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- options modal -->
+<div class="modal" id="optionsModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span data-i18n="settings">settings</span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div id="optTabs">
+      <button class="act" data-page="optPgTimer" data-i18n="tabTimer">timer</button>
+      <button data-page="optPgDisplay" data-i18n="tabDisplay">display</button>
+      <button data-page="optPgScramble" data-i18n="tabScramble">scramble</button>
+      <button data-page="optPgStats" data-i18n="tabStats">statistics</button>
+      <button data-page="optPgData" data-i18n="tabData">data</button>
+      <button data-page="optPgAbout" data-i18n="tabAbout">about</button>
+    </div>
+    <div class="optPage act" id="optPgTimer">
+      <label class="orow"><span data-i18n="oInput">timer input</span>
+        <select id="optInput">
+          <option value="keyboard" data-i18n="oKeyboard">keyboard (space)</option>
+          <option value="manual" data-i18n="oManual">manual entry</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oInspection">WCA inspection (15s)</span>
+        <span class="tswitch"><input type="checkbox" id="optInspection"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oVoice">inspection alert (8s/12s)</span>
+        <select id="optVoice">
+          <option value="none" data-i18n="off">off</option>
+          <option value="beep">beep</option>
+          <option value="voice">voice</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oHold">hold-to-start delay</span>
+        <select id="optHold">
+          <option value="0" data-i18n="none">none</option>
+          <option value="300">0.3 s</option>
+          <option value="550">0.55 s</option>
+          <option value="1000">1 s</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oUpdate">display while running</span>
+        <select id="optUpdate">
+          <option value="cs" data-i18n="oEveryFrame">update every frame</option>
+          <option value="ms" data-i18n="oMs">0.001 s live</option>
+          <option value="sec" data-i18n="oSecOnly">seconds only</option>
+          <option value="none" data-i18n="oDontShow">don't show</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oPrecision">time precision</span>
+        <select id="optPrecision"><option value="2">0.01 s</option><option value="3">0.001 s</option></select>
+      </label>
+      <label class="orow"><span data-i18n="oPhases">multi-phase (splits)</span>
+        <select id="optPhases">
+          <option value="1" data-i18n="off">off</option>
+          <option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oStopKeys">stop timer with</span>
+        <select id="optStopKeys">
+          <option value="any" data-i18n="oAnyKey">any key</option>
+          <option value="space" data-i18n="oSpaceOnly">space only</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oEnterStart">Enter also starts</span>
+        <span class="tswitch"><input type="checkbox" id="optEnterStart"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oTitleTimer">timer in tab title</span>
+        <span class="tswitch"><input type="checkbox" id="optTitleTimer"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oHaptic">haptic feedback (mobile)</span>
+        <span class="tswitch"><input type="checkbox" id="optHaptic"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oTarget">target time (s, 0=off)</span>
+        <input type="number" id="optTarget" min="0" step="0.01" value="0">
+      </label>
+    </div>
+    <div class="optPage" id="optPgDisplay">
+      <div class="orow"><span data-i18n="oTheme">theme</span>
+        <span class="seg" id="themeSeg">
+          <button data-v="light" data-i18n="light">light</button>
+          <button data-v="dark" data-i18n="dark">dark</button>
+          <button data-v="system" data-i18n="system">system</button>
+        </span>
+      </div>
+      <div class="orow"><span data-i18n="oAccent">accent color</span>
+        <span class="swatches" id="accentSw">
+          <button data-v="blue" style="background:#3182f6" aria-label="blue"></button>
+          <button data-v="green" style="background:#03b26c" aria-label="green"></button>
+          <button data-v="orange" style="background:#fe9800" aria-label="orange"></button>
+          <button data-v="red" style="background:#f04452" aria-label="red"></button>
+          <button data-v="navy" style="background:#333d4b" aria-label="navy"></button>
+        </span>
+      </div>
+      <label class="orow"><span data-i18n="oTimerSize">timer size</span>
+        <select id="optTimerScale">
+          <option value="0.7" data-i18n="small">small</option>
+          <option value="1" data-i18n="normal">normal</option>
+          <option value="1.3" data-i18n="large">large</option>
+          <option value="1.6" data-i18n="huge">huge</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oTimerSkin">timer font</span>
+        <select id="optTimerSkin">
+          <option value="default" data-i18n="oSkinDefault">default</option>
+          <option value="mono" data-i18n="oSkinMono">monospace</option>
+          <option value="lcd" data-i18n="oSkinLcd">LCD</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oUiScale">UI size</span>
+        <select id="optUiScale">
+          <option value="0.9">90%</option><option value="1">100%</option>
+          <option value="1.1">110%</option><option value="1.25">125%</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oScrSize">scramble size</span>
+        <select id="optScrScale">
+          <option value="0.8" data-i18n="small">small</option>
+          <option value="1" data-i18n="normal">normal</option>
+          <option value="1.3" data-i18n="large">large</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oFocus">hide UI while solving</span>
+        <span class="tswitch"><input type="checkbox" id="optFocus"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oSecondTool">second tool panel</span>
+        <span class="tswitch"><input type="checkbox" id="optSecondTool"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oLang">language</span>
+        <select id="optLang"><option value="en">English</option><option value="ko">한국어</option></select>
+      </label>
+    </div>
+    <div class="optPage" id="optPgScramble">
+      <label class="orow"><span data-i18n="oShowImage">show scramble image</span>
+        <span class="tswitch"><input type="checkbox" id="optShowImage" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oImgSize">image size</span>
+        <select id="optImgSize">
+          <option value="0.8" data-i18n="small">small</option>
+          <option value="1" data-i18n="normal">normal</option>
+          <option value="1.35" data-i18n="large">large</option>
+        </select>
+      </label>
+      <label class="orow"><span data-i18n="oMono">monospace multi-line scrambles</span>
+        <span class="tswitch"><input type="checkbox" id="optMono" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oAutoCopy">auto-copy new scramble</span>
+        <span class="tswitch"><input type="checkbox" id="optAutoCopy"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oMoveCount">show move count</span>
+        <span class="tswitch"><input type="checkbox" id="optMoveCount" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oNextPrev">show next scramble preview</span>
+        <span class="tswitch"><input type="checkbox" id="optNextPreview"><i></i></span>
+      </label>
+      <p class="onote" data-i18n="scrNote">this clone generates high-quality random-move scrambles (official csTimer uses random-state for some events).</p>
+    </div>
+    <div class="optPage" id="optPgStats">
+      <label class="orow">mo3 <span class="tswitch"><input type="checkbox" id="optMo3"><i></i></span></label>
+      <label class="orow">ao50 <span class="tswitch"><input type="checkbox" id="optAo50"><i></i></span></label>
+      <label class="orow">ao100 <span class="tswitch"><input type="checkbox" id="optAo100"><i></i></span></label>
+      <label class="orow">ao1000 <span class="tswitch"><input type="checkbox" id="optAo1000"><i></i></span></label>
+      <label class="orow"><span data-i18n="oBpa">show BPA / WPA</span>
+        <span class="tswitch"><input type="checkbox" id="optBpaWpa"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oMark">color best/worst in list</span>
+        <span class="tswitch"><input type="checkbox" id="optMark" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oConfirmClear">confirm before clearing</span>
+        <span class="tswitch"><input type="checkbox" id="optConfirmClear" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oListRev">time list: oldest first</span>
+        <span class="tswitch"><input type="checkbox" id="optListRev"><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oConfetti">PB confetti</span>
+        <span class="tswitch"><input type="checkbox" id="optConfetti" checked><i></i></span>
+      </label>
+      <label class="orow"><span data-i18n="oPbSound">PB sound</span>
+        <span class="tswitch"><input type="checkbox" id="optPbSound"><i></i></span>
+      </label>
+    </div>
+    <div class="optPage" id="optPgData">
+      <div class="mbtns wrap">
+        <button id="btnOpenExport" data-i18n="openExport">export / import…</button>
+      </div>
+    </div>
+    <div class="optPage" id="optPgAbout">
+      <p class="onote" id="aboutText"></p>
+    </div>
+  </div>
+</div>
+
+<!-- time detail modal -->
+<div class="modal" id="timeModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span id="tmTitle"></span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div class="mbody">
+      <pre id="tmScramble"></pre>
+      <div id="tmDate" class="onote"></div>
+      <div id="tmSplits" class="onote" style="display:none;"></div>
+      <div id="tmExtra"></div>
+      <div class="penRow">
+        <label><input type="radio" name="tmPen" id="tmOK">OK</label>
+        <label><input type="radio" name="tmPen" id="tmP2">+2</label>
+        <label><input type="radio" name="tmPen" id="tmDNF">DNF</label>
+      </div>
+      <textarea id="tmComment" rows="2" data-i18n-ph="comment" placeholder="comment"></textarea>
+      <div class="mbtns">
+        <button id="tmDelete" class="danger" data-i18n="delete">delete</button>
+        <button id="tmApply" class="primary">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- export modal -->
+<div class="modal" id="exportModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span data-i18n="exportTitle">export / import</span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div class="mbody">
+      <div class="mbtns wrap">
+        <button id="btnExpFile" class="primary" data-i18n="expFile">export to file</button>
+        <button id="btnExpCopy" data-i18n="expCopy">copy to clipboard</button>
+        <button id="btnExpCSV" data-i18n="expCsv">session CSV</button>
+      </div>
+      <div class="mbtns wrap" id="expExtraBtns"></div>
+      <div class="mbtns wrap">
+        <label class="filebtn"><span data-i18n="impFile">import from file (clone or csTimer .json)</span>
+          <input type="file" id="impFile" accept=".txt,.json,.csv">
+        </label>
+      </div>
+      <textarea id="impText" rows="4" data-i18n-ph="pasteJson" placeholder="or paste exported JSON here"></textarea>
+      <div class="mbtns">
+        <button id="btnImpPaste" data-i18n="impPaste">import pasted text</button>
+        <button id="btnResetAll" class="danger" data-i18n="resetAll">reset ALL data</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- session manager modal -->
+<div class="modal" id="sessModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span data-i18n="sessTitle">sessions</span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div class="mbody" id="sessMgrBody"></div>
+  </div>
+</div>
+
+<!-- input scramble modal -->
+<div class="modal" id="inputScrModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span data-i18n="inputScrTitle">input scrambles</span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div class="mbody">
+      <textarea id="inputScrText" rows="6" placeholder="R U R' U' ..."></textarea>
+      <div class="onote"><span data-i18n="inputScrHint">one scramble per line. queued scrambles are used in order.</span> <b id="inputScrCount"></b></div>
+      <div class="mbtns"><button id="inputScrApply" class="primary" data-i18n="addQueue">add to queue</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- avg detail modal -->
+<div class="modal" id="avgModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span id="avgTitle"></span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div class="mbody">
+      <pre id="avgBody" style="user-select:text;font-family:Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;line-height:1.7;"></pre>
+      <div class="mbtns"><button id="avgCopy" class="primary" data-i18n="copy">copy</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- scramble history modal -->
+<div class="modal" id="scrHistModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span data-i18n="scrHistTitle">scramble history</span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div class="mbody" id="scrHistBody"></div>
+  </div>
+</div>
+
+<!-- help modal -->
+<div class="modal" id="helpModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <div class="mtitle"><span data-i18n="helpTitle">keyboard shortcuts</span> <button class="mclose" aria-label="close">&#10005;</button></div>
+    <div class="mbody"><pre id="helpBody" style="font-family:inherit;white-space:pre-wrap;line-height:2;"></pre></div>
+  </div>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+<canvas id="fxCanvas"></canvas>
+
+<script src="js/draw_nnn.js"></script>
+<script src="js/draw_pyra.js"></script>
+<script src="js/draw_skewb.js"></script>
+<script src="js/draw_sq1.js"></script>
+<script src="js/draw_clock.js"></script>
+<script src="js/draw_mega.js"></script>
+<script src="js/scramble.js"></script>
+<script src="js/stats.js"></script>
+<script src="js/app.js"></script>
+<script src="js/feat_stats.js"></script>
+<script src="js/feat_data.js"></script>
+<script src="js/feat_tools.js"></script>
+<script src="js/feat_share.js"></script>
+</body>
+</html>
